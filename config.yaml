@@ -1,0 +1,58 @@
+# Project defaults. Personal data (name, city, language) goes in .env:
+#   cp .env.example .env
+# Any key can be overridden with an env var, nesting with "__":
+#   JARVIS_LLM__MODEL=qwen3.5:4b
+
+assistant_name: Jarvis
+language: pt-BR             # pt-BR, pt-PT, en-GB, en-US, es...
+log_level: INFO
+data_dir: data
+
+# Set via JARVIS_OWNER_NAME / _GENDER / _TITLE
+user:
+  name: null
+  gender: neutral           # female | male | neutral
+  form_of_address: null     # null = language default
+
+persona:
+  style: null               # null = British butler
+  max_sentences: 3
+
+# Set via JARVIS_CITY; geocoded automatically with Open-Meteo
+location:
+  query: null
+
+llm:
+  host: http://localhost:11434
+  model: qwen3.5:9b        # lighter: qwen3.5:4b
+  keep_alive: 30m           # keep the model loaded to cut latency
+  temperature: 0.6
+  think: false              # thinking mode adds seconds of latency
+  context_messages: 20
+
+stt:
+  model: mlx-community/whisper-large-v3-turbo
+  language: null            # null = assistant language
+
+tts:
+  engine: piper             # piper | say
+  voice: null               # null = language default
+  voices_dir: models/voices
+  say_voice: null
+
+wakeword:
+  model: hey_jarvis         # openWakeWord pre-trained model
+  threshold: 0.5
+
+news:
+  cache_minutes: 30
+  max_items: 5
+  feeds:
+    - https://news.google.com/rss/search?q=intelig%C3%AAncia+artificial&hl=pt-BR&gl=BR&ceid=BR:pt-419
+    - https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en
+    - https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    - https://techcrunch.com/category/artificial-intelligence/feed/
+
+server:
+  host: 127.0.0.1
+  port: 8765

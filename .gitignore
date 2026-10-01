@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local config and private notes (never committed)
+.env
+private/
+
+# Runtime data and downloaded models
+data/
+models/voices/*
+models/wakeword/*
+!models/**/.gitkeep
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# macOS
+.DS_Store
