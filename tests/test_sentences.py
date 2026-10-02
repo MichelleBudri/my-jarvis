@@ -52,3 +52,20 @@ def test_abbreviations_and_decimals_do_not_split():
 
 def test_clean_for_speech():
     assert clean_for_speech("**Olá**, senhora! 😀 Veja `isto`.") == "Olá, senhora! Veja isto."
+
+
+def test_clean_for_speech_drops_list_markers():
+    text = "Três notícias:\n1. Robôs dobram roupas.\n2) OpenAI lança modelo.\n- Fim."
+    assert clean_for_speech(text) == "Três notícias: Robôs dobram roupas. OpenAI lança modelo. Fim."
+    assert clean_for_speech("2. Segunda notícia.") == "Segunda notícia."
+    assert clean_for_speech("Em 2026. Ou 3,5 graus.") == "Em 2026. Ou 3,5 graus."
+
+
+def test_clean_for_speech_spells_out_units():
+    assert clean_for_speech("Bateria em 89%, 14°C e vento de 10 km/h.") == (
+        "Bateria em 89 por cento, 14 graus e vento de 10 quilômetros por hora."
+    )
+    assert clean_for_speech("It is 14 °C, 30 %.", "en") == "It is 14 degrees, 30 per cent."
+    assert clean_for_speech("100% certo") == "100 por cento certo"
+    assert clean_for_speech("Chuva de 2,9 mm.") == "Chuva de 2,9 milímetros."
+    assert clean_for_speech("Sem número: % e °") == "Sem número: % e"  # lone ° is dropped

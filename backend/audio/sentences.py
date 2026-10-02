@@ -26,11 +26,42 @@ _ABBREVIATIONS = {
     "jr",
 }
 _MARKUP = re.compile(r"[*_#`~>|]+")
+# "1. ", "2) ", "- " opening a line: news summaries come back as lists despite the prompt.
+_LIST_MARKER = re.compile(r"^[ \t]*(?:\d{1,2}[.)]|[-•])[ \t]+", re.MULTILINE)
+
+# Units after a number, spelled out. The prompt asks for this, but tool data
+# ("89%", "14°C") often leaks through, and the voice would misread or skip the symbol.
+_UNITS = {
+    "pt": (
+        (r"\s*°\s*C\b", " graus"),
+        (r"\s*[°º]", " graus"),
+        (r"\s*%", " por cento"),
+        (r"\s*km/h\b", " quilômetros por hora"),
+        (r"\s*mm\b", " milímetros"),
+    ),
+    "en": (
+        (r"\s*°\s*C\b", " degrees"),
+        (r"\s*[°º]", " degrees"),
+        (r"\s*%", " per cent"),
+        (r"\s*km/h\b", " kilometres an hour"),
+        (r"\s*mm\b", " millimetres"),
+    ),
+}
+_UNIT_RES = {
+    lang: [(re.compile(r"(?<=\d)" + pattern), word) for pattern, word in rules]
+    for lang, rules in _UNITS.items()
+}
 
 
-def clean_for_speech(text: str) -> str:
-    """Drop markdown symbols and emoji that a TTS voice would read aloud."""
-    text = _MARKUP.sub("", text)
+def spell_units(text: str, lang: str) -> str:
+    for pattern, word in _UNIT_RES.get(lang, _UNIT_RES["en"]):
+        text = pattern.sub(word, text)
+    return text
+
+
+def clean_for_speech(text: str, lang: str = "pt") -> str:
+    """Drop markdown, list markers and emoji that a TTS voice would read aloud; spell out units."""
+    text = spell_units(_MARKUP.sub("", _LIST_MARKER.sub("", text)), lang)
     text = "".join(c for c in text if unicodedata.category(c) not in ("So", "Cs"))
     return re.sub(r"\s+", " ", text).strip()
 

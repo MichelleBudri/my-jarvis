@@ -92,7 +92,7 @@ class LLMConfig(BaseModel):
     keep_alive: str = "30m"
     temperature: float = 0.6
     think: bool = False
-    context_messages: int = 20
+    context_messages: int = 30  # a turn with a tool call takes 4: question, call, result, answer
 
 
 class STTConfig(BaseModel):
@@ -135,6 +135,14 @@ class WakeWordConfig(BaseModel):
     chime: bool = True
 
 
+class ToolsConfig(BaseModel):
+    # weather | news | system | timers. Remove one to hide it from the model.
+    enabled: list[str] = Field(default_factory=lambda: ["weather", "news", "system", "timers"])
+    max_rounds: int = 3  # tool calls the model may chain before it must answer
+    # Say "one moment" when the model is silent this long (it is probably calling a tool).
+    one_moment_after_s: float = 1.5
+
+
 class NewsConfig(BaseModel):
     cache_minutes: int = 30
     max_items: int = 5
@@ -171,6 +179,7 @@ class Settings(BaseSettings):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     vad: VADConfig = Field(default_factory=VADConfig)
     wakeword: WakeWordConfig = Field(default_factory=WakeWordConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
 

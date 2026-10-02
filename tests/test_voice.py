@@ -5,6 +5,7 @@ import httpx
 
 from backend.brain.conversation import Conversation
 from backend.brain.llm import OllamaClient
+from backend.brain.prompts import build_greeting
 from backend.config import Settings
 from backend.memory.store import MemoryStore
 from backend.voice import reply_aloud
@@ -40,7 +41,7 @@ def ollama_streaming(chunks):
 
 def test_reply_aloud_speaks_sentence_by_sentence(tmp_path):
     s = Settings()
-    chunks = ["Boa noite, **senhora**. ", "Faz 18 graus ", "lá fora. ", "Algo mais?"]
+    chunks = ["Pois não, **senhora**. ", "Faz 18 graus ", "lá fora. ", "Algo mais?"]
     client = httpx.AsyncClient(
         base_url="http://ollama", transport=httpx.MockTransport(ollama_streaming(chunks))
     )
@@ -53,7 +54,8 @@ def test_reply_aloud_speaks_sentence_by_sentence(tmp_path):
         )
     )
 
-    assert speaker.spoken == ["Boa noite, senhora.", "Faz 18 graus lá fora.", "Algo mais?"]
-    assert "".join(tokens) == "".join(chunks)
+    greeting = build_greeting(s)  # said by code on the first turn, before the model
+    assert speaker.spoken == [greeting, "Pois não, senhora.", "Faz 18 graus lá fora.", "Algo mais?"]
+    assert "".join(tokens) == f"{greeting} " + "".join(chunks)
     assert started == [1]
     assert conv.store.count(conv.id) == 2

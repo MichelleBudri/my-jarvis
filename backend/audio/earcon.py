@@ -18,6 +18,11 @@ def tones(freqs: list[float], note_ms: int = 70, volume: float = 0.15) -> np.nda
 
 WAKE = tones([660, 880])
 SLEEP = tones([880, 587])
+ALERT = tones([988, 784, 988, 784], note_ms=110)  # a timer went off
+
+
+def duration_s(audio: np.ndarray) -> float:
+    return len(audio) / RATE
 
 
 def play(audio: np.ndarray, device: str | int | None = None) -> None:

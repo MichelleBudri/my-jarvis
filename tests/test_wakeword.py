@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from backend.audio import earcon
-from backend.audio.stt import is_wake_phrase
+from backend.audio.stt import is_sign_off, is_wake_phrase
 from backend.audio.wakeword import CHUNK_SAMPLES, WakeWordDetector
 from backend.state import InvalidTransition, State, StateMachine
 
@@ -79,5 +79,25 @@ def test_state_machine_notifies_and_validates():
     now[0] = 3.5
     assert sm.elapsed == 1.5
     assert seen == [(State.SLEEPING, State.LISTENING)]
+    assert sm.to(State.SPEAKING)  # unprompted announcement
     with pytest.raises(InvalidTransition):
-        sm.to(State.SPEAKING)
+        sm.to(State.THINKING)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Obrigada, pode descansar.", True),
+        ("Pode dormir, Jarvis.", True),
+        ("Ok, é só isso por enquanto.", True),
+        ("Valeu, Jarvis, até mais!", True),
+        ("Tchau.", True),
+        ("That's all for now, thanks.", True),
+        ("Pode descansar depois de me dizer o clima.", False),
+        ("É só isso que tem de notícia?", False),
+        ("Até que horas abre o mercado?", False),
+        ("Obrigada.", False),  # handled by is_farewell, only when Whisper drops it
+    ],
+)
+def test_is_sign_off(text, expected):
+    assert is_sign_off(text) is expected

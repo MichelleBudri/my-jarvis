@@ -10,14 +10,27 @@ from backend.brain.conversation import Conversation
 from backend.brain.llm import LLMError, OllamaClient
 from backend.config import Settings
 from backend.memory.store import MemoryStore
+from backend.tools import build_registry
 from backend.tools.geocode import resolve_location
+from backend.tools.timers import Timer, TimerManager
 
 console = Console(highlight=False)
+
+
+def echo(text: str) -> None:
+    """Print streamed reply text. soft_wrap: rich would wrap each chunk as if it started a
+    line, turning a space into a newline mid-sentence ("São Bernardo do\nCampo")."""
+    console.print(text, end="", markup=False, soft_wrap=True)
+
 
 HELP = "[dim]/new  new conversation · /help  commands · /quit  exit[/]"
 QUIT = {"/quit", "/exit", "/q", "/sair"}
 NEW = {"/new", "/novo"}
 HELP_CMDS = {"/help", "/ajuda"}
+
+
+async def _once(text: str):
+    yield text
 
 
 async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> int:
@@ -30,7 +43,16 @@ async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> in
         speaker = make_speaker(s)
     store = MemoryStore(s.db_path)
     conv_id = store.last_conversation() if resume else None
-    conv = Conversation(s, llm, store, conv_id)
+
+    def on_timer(timer: Timer) -> None:
+        text = timers.announcement(timer)
+        console.print(f"\n[bold cyan]{s.assistant_name} ›[/] {text}")
+        conv.add_assistant_note(text)
+        if speaker:
+            asyncio.create_task(speaker.speak(_once(text)))
+
+    timers = TimerManager(s, on_fire=on_timer)
+    conv = Conversation(s, llm, store, conv_id, build_registry(s, timers), warm_after_turn=True)
 
     try:
         with console.status(f"Loading {s.llm.model}..."):
@@ -78,11 +100,11 @@ async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> in
                         speaker,
                         text,
                         s.tts.sentence_min_chars,
-                        on_token=lambda t: console.print(t, end="", markup=False),
+                        on_token=echo,
                     )
                 else:
                     async for token in conv.reply(text):
-                        console.print(token, end="", markup=False)
+                        echo(token)
             except LLMError as exc:
                 console.print(f"\n[red]Model error: {exc}[/]")
                 continue
@@ -98,8 +120,11 @@ async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> in
             details.append(f"total {st.total_s:.1f}s")
             if st.tokens_per_second:
                 details.append(f"{st.tokens_per_second:.0f} tok/s")
+            if st.tools:
+                details.append(f"tools {', '.join(st.tools)} {st.tools_s:.2f}s")
             console.print(f"\n[dim]{' · '.join(details)}[/]")
     finally:
+        timers.cancel_all()
         await llm.aclose()
         store.close()
 

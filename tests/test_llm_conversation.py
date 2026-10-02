@@ -5,6 +5,7 @@ import httpx
 
 from backend.brain.conversation import Conversation
 from backend.brain.llm import ChatChunk, OllamaClient
+from backend.brain.prompts import build_greeting
 from backend.config import Settings
 from backend.memory.store import MemoryStore
 
@@ -44,7 +45,9 @@ def test_conversation_streams_and_persists(tmp_path):
         return [t async for t in conv.reply("Olá, Jarvis")]
 
     tokens = asyncio.run(go())
-    assert "".join(tokens) == "Pois não, senhora."
+    greeting = build_greeting(s)
+    assert tokens[0] == f"{greeting} "  # first turn: greeted by code, not by the model
+    assert "".join(tokens[1:]) == "Pois não, senhora."
 
     payload = captured["payload"]
     assert payload["model"] == s.llm.model
@@ -57,6 +60,10 @@ def test_conversation_streams_and_persists(tmp_path):
     stored = store.recent(conv.id, 10)
     assert [m["role"] for m in stored] == ["user", "assistant"]
     assert stored[0]["content"] == "Olá, Jarvis"  # the context note is not persisted
+    assert stored[1]["content"] == "Pois não, senhora."  # the model would copy a greeting
+
+    # Later turns go straight to the model's answer.
+    assert "".join(asyncio.run(go())) == "Pois não, senhora."
     assert conv.last_stats.first_token_s is not None
     assert round(conv.last_stats.tokens_per_second) == 40
     assert conv.last_stats.prompt_tokens == 12

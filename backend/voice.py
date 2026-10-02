@@ -12,7 +12,7 @@ from rich.console import Console
 
 from backend.audio import earcon
 from backend.audio.sentences import SentenceSplitter, clean_for_speech
-from backend.audio.stt import is_wake_phrase
+from backend.audio.stt import is_farewell, is_sign_off, is_wake_phrase
 from backend.audio.tts import PiperSpeaker, SaySpeaker, Speaker
 from backend.audio.wakeword import WakeWordDetector
 from backend.brain.conversation import Conversation
@@ -20,9 +20,19 @@ from backend.brain.llm import LLMError, OllamaClient
 from backend.config import Settings
 from backend.memory.store import MemoryStore
 from backend.state import State, StateMachine
+from backend.tools import Tool, build_registry
 from backend.tools.geocode import resolve_location
+from backend.tools.timers import TimerManager
 
 console = Console(highlight=False)
+
+
+def echo(text: str) -> None:
+    """Print streamed reply text. soft_wrap: rich would wrap each chunk as if it started a
+    line, turning a space into a newline mid-sentence ("São Bernardo do\nCampo")."""
+    console.print(text, end="", markup=False, soft_wrap=True)
+
+
 ECHO_TAIL_S = 0.4  # ignore the mic briefly after speaking so the room echo dies down
 
 
@@ -42,18 +52,45 @@ async def reply_aloud(
 ) -> bool:
     """Stream the LLM reply into the speaker sentence by sentence."""
     splitter = SentenceSplitter(min_chars)
+    lang = conv.s.locale.lang
 
     async def sentences() -> AsyncIterator[str]:
         async for token in conv.reply(user_text):
             if on_token:
                 on_token(token)
             for sentence in splitter.feed(token):
-                if spoken := clean_for_speech(sentence):
+                if spoken := clean_for_speech(sentence, lang):
                     yield spoken
-        if (rest := splitter.flush()) and (spoken := clean_for_speech(rest)):
+        if (rest := splitter.flush()) and (spoken := clean_for_speech(rest, lang)):
             yield spoken
 
     return await speaker.speak(sentences(), on_start=on_start)
+
+
+def sleep_tool(request_sleep: Callable[[], None]) -> Tool:
+    async def go_to_sleep() -> dict:
+        request_sleep()
+        return {"ok": True, "note": "reply with a brief farewell; you sleep after speaking"}
+
+    return Tool(
+        name="go_to_sleep",
+        description=(
+            "Stop listening until the wake word is said again. Call whenever the user ends "
+            "the conversation: says goodbye or thanks you with nothing more to ask ('that's "
+            "all', 'é só isso, obrigada', 'por enquanto é só'), or asks you to rest or stand by."
+        ),
+        handler=go_to_sleep,
+        capability={
+            "pt": "voltar a dormir quando a conversa terminar",
+            "en": "go back to sleep when the conversation is over",
+        },
+    )
+
+
+def tools_detail(st) -> str | None:
+    if not st.tools:
+        return None
+    return f"tools {', '.join(st.tools)} {st.tools_s:.2f}s"
 
 
 class VoiceLoop:
@@ -85,6 +122,8 @@ class VoiceLoop:
         self.mute_until = 0.0
         self.listen_deadline: float | None = None  # None = listen forever
         self._barged_in = False
+        self._sleep_requested = False
+        self.pending: list[str] = []  # announcements waiting for a quiet moment
 
     @property
     def busy(self) -> bool:
@@ -110,8 +149,47 @@ class VoiceLoop:
             self.chime(earcon.SLEEP)
         console.print(f'[dim]○ sleeping · say "Hey {self.s.assistant_name}"[/]')
 
+    def request_sleep(self) -> None:
+        """Go to sleep once the current reply ends (the `go_to_sleep` tool)."""
+        if self.wake:
+            self._sleep_requested = True
+
+    def announce(self, text: str) -> None:
+        """Speak something unprompted as soon as Jarvis is not busy or being spoken to."""
+        self.pending.append(text)
+        self._maybe_announce()
+
+    def _maybe_announce(self) -> None:
+        if not self.pending or self.busy:
+            return
+        if self.state.state not in (State.SLEEPING, State.LISTENING) or self.segmenter.in_speech:
+            return
+        texts, self.pending = self.pending, []
+        self.state.to(State.SPEAKING)
+        self.task = asyncio.create_task(self._speak_announcement(texts))
+        self.task.add_done_callback(self._after_turn)
+
+    async def _speak_announcement(self, texts: list[str]) -> None:
+        if self.chime:
+            self.chime(earcon.ALERT)
+            await asyncio.sleep(earcon.duration_s(earcon.ALERT) + 0.1)
+        for text in texts:
+            console.print(f"\n[bold cyan]{self.s.assistant_name} ›[/] {text}")
+            self.conv.add_assistant_note(text)
+
+        async def sentences() -> AsyncIterator[str]:
+            for text in texts:
+                yield text
+
+        await self.speaker.speak(sentences())
+
     def _after_turn(self, _: asyncio.Task) -> None:
         self.state.to(State.LISTENING)
+        if self._sleep_requested:
+            self._sleep_requested = False
+            self._barged_in = False
+            self._go_to_sleep()
+            return
         if self._barged_in:
             # The user is mid-sentence: keep the utterance that interrupted us.
             self._barged_in = False
@@ -122,6 +200,8 @@ class VoiceLoop:
         self.segmenter.reset()
 
     def on_frame(self, frame: np.ndarray) -> None:
+        if self.pending:
+            self._maybe_announce()
         if self.state.state is State.SLEEPING:
             if (score := self.wake.detect(frame)) is not None:
                 self._wake_up(score)
@@ -159,9 +239,19 @@ class VoiceLoop:
             return
         if not text:
             raw = getattr(self.stt, "last_raw", "")
+            if self.wake and is_farewell(raw):
+                # Filtered as a Whisper hallucination, but while awake a lone "obrigada" is
+                # nearly always a goodbye; if it was noise, we only sleep a little early.
+                console.print(f'[dim](farewell "{raw.strip()}" · going to sleep)[/]')
+                self.request_sleep()
+                return
             reason = f'ignored "{raw}"' if raw.strip() else "no speech recognized"
             console.print(f"[dim]({reason} · stt {stt_s:.2f}s)[/]")
             return
+        if is_sign_off(text, s.assistant_name):
+            # Decided here, not by the model: qwen3 often replied "I'll rest now" without
+            # calling go_to_sleep. The model still says the farewell; we sleep after it.
+            self.request_sleep()
         console.print(f"\n[bold]{s.locale.you_label} ›[/] {text}")
         console.print(f"[bold cyan]{s.assistant_name} ›[/] ", end="")
 
@@ -179,7 +269,7 @@ class VoiceLoop:
                 self.speaker,
                 text,
                 s.tts.sentence_min_chars,
-                on_token=lambda t: console.print(t, end="", markup=False),
+                on_token=echo,
                 on_start=on_start,
             )
         except LLMError as exc:
@@ -189,6 +279,8 @@ class VoiceLoop:
         details = [f"stt {stt_s:.2f}s"]
         if st.first_token_s is not None:
             details.append(f"llm first word {st.first_token_s:.2f}s")
+        if tools := tools_detail(st):
+            details.append(tools)
         if first_audio is not None:
             details.append(f"voice after {first_audio - speech_end:.2f}s")
         if st.tokens_per_second:
@@ -207,7 +299,12 @@ async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = 
     await resolve_location(s)
     llm = OllamaClient(s.llm)
     store = MemoryStore(s.db_path)
-    conv = Conversation(s, llm, store, store.last_conversation() if resume else None)
+    # The callbacks reach `loop`, created below, only after startup.
+    timers = TimerManager(s, on_fire=lambda t: loop.announce(timers.announcement(t)))
+    extra = [sleep_tool(lambda: loop.request_sleep())] if use_wake else []
+    tools = build_registry(s, timers, extra)
+    conv_id = store.last_conversation() if resume else None
+    conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
     stt = WhisperSTT(s.stt.model, s.stt_language, s.stt_hint)
     speaker = make_speaker(s)
 
@@ -235,6 +332,7 @@ async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = 
     mic.start()
     mode = "barge-in on" if s.audio.barge_in else "half duplex"
     console.print(f"[bold cyan]{s.assistant_name}[/] online · {s.llm.model} · {mode}")
+    console.print(f"[dim]Tools: {', '.join(tools.names) or 'none'}[/]")
     if wake:
         console.print(f'[dim]Say "Hey {s.assistant_name}" to wake me up. Ctrl+C to quit.[/]')
     else:
@@ -247,6 +345,7 @@ async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = 
         pass
     finally:
         mic.stop()
+        timers.cancel_all()
         if loop.busy:
             speaker.interrupt()
             loop.task.cancel()

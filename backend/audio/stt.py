@@ -25,6 +25,10 @@ _HALLUCINATIONS = {
 }
 
 
+# Hallucinations that are also real farewells: right after a reply, take them at face value.
+_FAREWELLS = {"obrigado", "obrigada", "tchau", "thank you", "bye"}
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
@@ -32,6 +36,32 @@ def _normalize(text: str) -> str:
 def is_hallucination(text: str) -> bool:
     norm = _normalize(text)
     return not norm or norm in _HALLUCINATIONS
+
+
+def is_farewell(text: str) -> bool:
+    return _normalize(text) in _FAREWELLS
+
+
+# The whole utterance must be a sign-off: "thanks, you can rest" yes, "you can rest after
+# telling me the weather" no. qwen3 often answered these without calling go_to_sleep.
+_SIGN_OFF_FILLER = (
+    r"(?:ok|okay|certo|ta bom|tá bom|então|entao|muito|obrigad[oa]|valeu|thanks|thank you|{name})"
+)
+_SIGN_OFF = (
+    r"pode (?:ir )?(?:descansar|dormir)|vai descansar|vá descansar|pode parar de ouvir"
+    r"|(?:é|e|era) (?:só|so) isso|por enquanto (?:é|e) (?:só|so)|(?:é|e) tudo"
+    r"|até (?:mais|logo|amanhã|amanha|depois)|tchau"
+    r"|that'?s all|that is all|go to sleep|you can (?:rest|sleep)|goodbye|bye"
+)
+
+
+def is_sign_off(text: str, name: str = "Jarvis") -> bool:
+    """True when the user is only ending the conversation ("Obrigada, pode descansar.")."""
+    names = "|".join(re.escape(n) for n in {"jarvis", _normalize(name)})
+    filler = _SIGN_OFF_FILLER.format(name=names)
+    tail = r"(?:por (?:enquanto|hoje|agora)|for now|for today)"
+    pattern = rf"(?:{filler}\s+)*(?:{_SIGN_OFF})(?:\s+(?:{filler}|{tail}))*"
+    return re.fullmatch(pattern, re.sub(r"\s+", " ", _normalize(text))) is not None
 
 
 def echoes_hint(text: str, hint: str | None) -> bool:

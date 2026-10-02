@@ -15,8 +15,9 @@ class State(StrEnum):
 
 
 TRANSITIONS: dict[State, set[State]] = {
-    State.SLEEPING: {State.LISTENING},
-    State.LISTENING: {State.SLEEPING, State.THINKING},
+    # Straight to speaking for unprompted announcements (a timer going off).
+    State.SLEEPING: {State.LISTENING, State.SPEAKING},
+    State.LISTENING: {State.SLEEPING, State.THINKING, State.SPEAKING},
     # Back to listening when the turn ends, fails or is interrupted.
     State.THINKING: {State.SPEAKING, State.LISTENING},
     State.SPEAKING: {State.LISTENING},

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -16,7 +18,9 @@ CREATE TABLE IF NOT EXISTS messages (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
     content         TEXT NOT NULL,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    tool_calls      TEXT,  -- JSON, on an assistant message that called tools
+    tool_name       TEXT   -- on a tool message
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
 """
@@ -32,6 +36,14 @@ class MemoryStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(messages)")}
+        with self.db:
+            for col in ("tool_calls", "tool_name"):
+                if col not in cols:  # databases created before tool calls were persisted
+                    self.db.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT")
 
     def close(self) -> None:
         self.db.close()
@@ -45,20 +57,47 @@ class MemoryStore:
         row = self.db.execute("SELECT MAX(id) AS id FROM conversations").fetchone()
         return row["id"]
 
-    def add(self, conversation_id: int, role: str, content: str) -> None:
+    def add(
+        self,
+        conversation_id: int,
+        role: str,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        tool_name: str | None = None,
+    ) -> None:
         with self.db:
             self.db.execute(
-                "INSERT INTO messages (conversation_id, role, content, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (conversation_id, role, content, _now()),
+                "INSERT INTO messages "
+                "(conversation_id, role, content, created_at, tool_calls, tool_name) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    conversation_id,
+                    role,
+                    content,
+                    _now(),
+                    json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
+                    tool_name,
+                ),
             )
 
-    def recent(self, conversation_id: int, limit: int) -> list[dict[str, str]]:
+    def recent(self, conversation_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT role, content, tool_calls, tool_name FROM messages "
+            "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
             (conversation_id, limit),
         ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        messages: list[dict[str, Any]] = []
+        for r in reversed(rows):
+            msg: dict[str, Any] = {"role": r["role"], "content": r["content"]}
+            if r["tool_calls"]:
+                msg["tool_calls"] = json.loads(r["tool_calls"])
+            if r["tool_name"]:
+                msg["tool_name"] = r["tool_name"]
+            messages.append(msg)
+        # The limit may cut a turn after its question: a call or result without it.
+        while messages and (messages[0]["role"] == "tool" or "tool_calls" in messages[0]):
+            messages.pop(0)
+        return messages
 
     def count(self, conversation_id: int) -> int:
         row = self.db.execute(

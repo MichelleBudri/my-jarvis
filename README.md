@@ -60,7 +60,7 @@ flowchart LR
     WAKE --> VAD["Speech detection<br/><sub>Silero VAD</sub>"]
     VAD --> STT["Transcription<br/><sub>mlx-whisper</sub>"]
     STT --> LLM{{"🧠 Brain<br/><sub>Ollama · qwen3</sub>"}}
-    LLM <--> TOOLS["Tools<br/><sub>weather · news · system</sub>"]
+    LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers</sub>"]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
     LLM -. WebSocket .-> HUD[["🛰️ HUD"]]
@@ -142,6 +142,23 @@ JARVIS_LLM__MODEL=qwen3.5:4b uv run python -m backend voice
 </details>
 
 <details>
+<summary><b>Tools</b></summary>
+<br>
+
+Jarvis calls tools on its own when a question needs live data or an action:
+
+| Tool | Ask things like | Source |
+|---|---|---|
+| Weather | "How's the weather?" · "Will it rain tomorrow?" · "And in Lisbon?" | [Open-Meteo](https://open-meteo.com) (free, no key) |
+| AI news | "Any AI news?" · "Anything about robots?" | RSS feeds in `config.yaml` (`news.feeds`) |
+| System | "How much battery is left?" · "Set the volume to 30" · "Open Safari" | macOS (`pmset`, `osascript`, `open`) |
+| Timers | "Remind me in 10 minutes to take the cake out" · "Make it 15" · "Cancel the timer" | Local; announced out loud when they end |
+
+In voice mode, saying goodbye, "that's all" or "you can rest" sends Jarvis back to sleep. Unmuting brings back the volume you had before. Turn tools off with `tools.enabled` in `config.yaml` (for example `JARVIS_TOOLS__ENABLED='["weather", "timers"]'`). Timers live in memory and are cleared when Jarvis quits.
+
+</details>
+
+<details>
 <summary><b>Voice and microphone</b></summary>
 <br>
 
@@ -175,8 +192,8 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 | 1 | Text chat: streaming LLM, persona, history, personalization | ✅ Done |
 | 2 | Voice in and out: VAD, Whisper, streaming Piper, barge-in | ✅ Done |
 | 3 | Wake word: "Hey Jarvis", state machine | ✅ Done |
-| 4 | Tools: weather, AI news, system, timers | 🔜 Next |
-| 5 | Activation briefing | ⏳ Planned |
+| 4 | Tools: weather, AI news, system, timers | ✅ Done |
+| 5 | Activation briefing | 🔜 Next |
 | 6 | Holographic HUD | ⏳ Planned |
 | 7 | Polish: long-term memory, launch at login, echo cancellation | ⏳ Planned |
 

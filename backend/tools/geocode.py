@@ -67,9 +67,10 @@ def _score(result: dict, hints: list[str]) -> int:
     return score
 
 
-def pick_result(results: list[dict], hints: list[str]) -> dict:
-    # max() is stable: ties keep Open-Meteo's order (most populous first)
-    return max(results, key=lambda r: _score(r, hints))
+def pick_result(results: list[dict], hints: list[str], prefer: list[str] = ()) -> dict:
+    """Best match for the hints the user gave; ties go to `prefer` (the home state and
+    country), then to Open-Meteo's order (most populous first, max() is stable)."""
+    return max(results, key=lambda r: (_score(r, hints), _score(r, list(prefer))))
 
 
 def display_name(result: dict) -> str:
@@ -82,7 +83,10 @@ def display_name(result: dict) -> str:
 
 
 async def geocode(
-    query: str, client: httpx.AsyncClient | None = None, language: str = "pt"
+    query: str,
+    client: httpx.AsyncClient | None = None,
+    language: str = "pt",
+    prefer: list[str] = (),
 ) -> dict:
     city, *hints = [p.strip() for p in query.split(",") if p.strip()]
     own = client is None
@@ -98,12 +102,13 @@ async def geocode(
             await client.aclose()
     if not results:
         raise GeocodeError(f'City not found: "{query}"')
-    best = pick_result(results, hints)
+    best = pick_result(results, hints, prefer)
     return {
         "name": display_name(best),
         "latitude": best["latitude"],
         "longitude": best["longitude"],
         "timezone": best.get("timezone"),
+        "country": best.get("country"),
     }
 
 

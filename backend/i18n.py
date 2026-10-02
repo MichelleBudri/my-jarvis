@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 
@@ -23,6 +23,18 @@ class Locale:
     farewell: str
     stt_hint: str  # primes Whisper with the assistant's name and conversational style
     native_prompt: bool = True  # False: English prompt + reply-in-language rule
+    # Spoken durations and timer announcements
+    units: dict[str, tuple[str, str]] = field(
+        default_factory=lambda: {
+            "h": ("hour", "hours"),
+            "m": ("minute", "minutes"),
+            "s": ("second", "seconds"),
+        }
+    )
+    and_word: str = "and"
+    timer_done: str = "Excuse me{addr}, your {duration} timer is up."
+    timer_done_label: str = "Excuse me{addr}, your {duration} timer is up: {label}."
+    one_moment: str = "One moment."  # while a slow tool runs
 
     def format_datetime(self, now: datetime) -> str:
         wd, month = self.weekdays[now.weekday()], self.months[now.month - 1]
@@ -36,6 +48,20 @@ class Locale:
         if not name or title == name:
             return title
         return f"{title} {name}" if self.lang == "pt" else title
+
+    def format_duration(self, seconds: float) -> str:
+        """3725 → "1 hour, 2 minutes and 5 seconds", in words a voice can read."""
+        total = max(0, round(seconds))
+        h, rest = divmod(total, 3600)
+        m, s = divmod(rest, 60)
+        parts = [
+            f"{n} {self.units[k][0] if n == 1 else self.units[k][1]}"
+            for n, k in ((h, "h"), (m, "m"), (s, "s"))
+            if n
+        ] or [f"0 {self.units['s'][1]}"]
+        if len(parts) == 1:
+            return parts[0]
+        return f"{', '.join(parts[:-1])} {self.and_word} {parts[-1]}"
 
 
 PT_BR = Locale(
@@ -82,6 +108,11 @@ PT_BR = Locale(
     you_label="Você",
     farewell="Às suas ordens{addr}. Até breve.",
     stt_hint="Olá, {name}. Como está o tempo hoje? Quais são as notícias?",
+    units={"h": ("hora", "horas"), "m": ("minuto", "minutos"), "s": ("segundo", "segundos")},
+    and_word="e",
+    timer_done="Com licença{addr}, o timer de {duration} terminou.",
+    timer_done_label="Com licença{addr}, o timer de {duration} terminou: {label}.",
+    one_moment="Um momento.",
 )
 
 EN = Locale(

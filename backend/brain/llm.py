@@ -62,9 +62,20 @@ class OllamaClient:
         )
         self._raise_for(resp)
 
-    async def prime(self, system_prompt: str) -> None:
-        """Load the model and pre-process the system prompt so the first reply is fast."""
-        payload = self._payload([{"role": "system", "content": system_prompt}], False, None)
+    async def prime(
+        self, system_prompt: str, tools: list | None = None, history: list[Message] | None = None
+    ) -> None:
+        """Load the model and pre-process the prompt prefix so the next reply is fast.
+
+        Pass the same tools as the chat: they are rendered into the prompt prefix. With
+        `history`, the conversation so far is processed too (Ollama keeps it cached).
+        """
+        messages = [{"role": "system", "content": system_prompt}, *(history or [])]
+        payload = self._payload(messages, False, tools)
+        if history:
+            # qwen3's template appends "/no_think" to the last user message only; here that
+            # message stands in for the next one, which would no longer match the cache.
+            del payload["think"]
         payload["options"]["num_predict"] = 1
         self._raise_for(await self._client.post("/api/chat", json=payload))
 

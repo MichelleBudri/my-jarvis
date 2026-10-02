@@ -144,3 +144,118 @@ def test_without_wake_word_always_listens():
         assert h.loop.listen_deadline is None and h.chimes == []
 
     asyncio.run(scenario())
+
+
+class FakeSpeaker:
+    def __init__(self):
+        self.said: list[str] = []
+
+    async def speak(self, sentences, on_start=None):
+        async for sentence in sentences:
+            if on_start:
+                on_start()
+            self.said.append(sentence)
+        return True
+
+    def interrupt(self):
+        pass
+
+
+class FakeConversation:
+    """Replies with fixed text; `on_reply` runs mid-reply, like a tool call would."""
+
+    def __init__(self, text="Até logo.", on_reply=None):
+        self.s = Settings()
+        self.text, self.on_reply = text, on_reply
+        self.notes: list[str] = []
+        self.last_stats = type(
+            "Stats", (), {"first_token_s": None, "tokens_per_second": None, "tools": []}
+        )()
+
+    async def reply(self, user_text):
+        if self.on_reply:
+            self.on_reply()
+        yield self.text
+
+    def add_assistant_note(self, text):
+        self.notes.append(text)
+
+
+def test_announcement_wakes_up_speaks_and_listens_for_follow_up():
+    async def scenario():
+        h = Harness()
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation()
+        h.loop.announce("Com licença, o timer de 5 minutos terminou.")
+        assert h.state is State.SPEAKING
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.loop.speaker.said == ["Com licença, o timer de 5 minutos terminou."]
+        assert h.loop.conv.notes == h.loop.speaker.said  # kept for follow-up questions
+        assert h.chimes == [earcon.ALERT]
+        assert h.state is State.LISTENING and h.loop.listen_deadline is not None
+
+    asyncio.run(scenario())
+
+
+def test_announcement_waits_while_the_user_speaks():
+    async def scenario():
+        h = Harness()
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation()
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(10, prob=0.9)  # user is mid-sentence
+        h.loop.announce("Timer!")
+        assert h.state is State.LISTENING and h.loop.pending == ["Timer!"]
+
+    asyncio.run(scenario())
+
+
+def test_go_to_sleep_after_the_farewell():
+    async def scenario():
+        h = Harness(text="Pode descansar.")
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation("Às suas ordens.", on_reply=h.loop.request_sleep)
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.loop.speaker.said == ["Às suas ordens."]
+        assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
+
+    asyncio.run(scenario())
+
+
+def test_filtered_thank_you_while_awake_goes_to_sleep():
+    async def scenario():
+        h = Harness(text="")  # Whisper's "Obrigada." is dropped as a likely hallucination
+        h.stt.last_raw = " Obrigada."
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
+
+    asyncio.run(scenario())
+
+
+def test_sign_off_sleeps_even_if_the_model_skips_the_tool():
+    async def scenario():
+        h = Harness(text="Obrigada, pode descansar.")
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation("Por nada, senhora.")  # no go_to_sleep call
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.loop.speaker.said == ["Por nada, senhora."]
+        assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
+
+    asyncio.run(scenario())
