@@ -20,16 +20,23 @@ NEW = {"/new", "/novo"}
 HELP_CMDS = {"/help", "/ajuda"}
 
 
-async def run_chat(s: Settings, resume: bool = False) -> int:
+async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> int:
     await resolve_location(s)
     llm = OllamaClient(s.llm)
+    speaker = None
+    if speak:
+        from backend.voice import make_speaker
+
+        speaker = make_speaker(s)
     store = MemoryStore(s.db_path)
     conv_id = store.last_conversation() if resume else None
     conv = Conversation(s, llm, store, conv_id)
 
     try:
         with console.status(f"Loading {s.llm.model}..."):
-            await llm.warmup()
+            await conv.prime()
+            if speaker:
+                await speaker.warmup()
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Could not reach Ollama: {exc}[/]")
         console.print("Run [bold]uv run python -m backend doctor[/] to diagnose.")
@@ -63,12 +70,25 @@ async def run_chat(s: Settings, resume: bool = False) -> int:
 
             console.print(f"[bold cyan]{s.assistant_name} ›[/] ", end="")
             try:
-                async for token in conv.reply(text):
-                    console.print(token, end="", markup=False)
+                if speaker:
+                    from backend.voice import reply_aloud
+
+                    await reply_aloud(
+                        conv,
+                        speaker,
+                        text,
+                        s.tts.sentence_min_chars,
+                        on_token=lambda t: console.print(t, end="", markup=False),
+                    )
+                else:
+                    async for token in conv.reply(text):
+                        console.print(token, end="", markup=False)
             except LLMError as exc:
                 console.print(f"\n[red]Model error: {exc}[/]")
                 continue
             except KeyboardInterrupt:
+                if speaker:
+                    speaker.interrupt()
                 console.print("\n[dim](interrupted)[/]")
                 continue
             st = conv.last_stats

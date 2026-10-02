@@ -82,12 +82,12 @@ class UserConfig(BaseModel):
 
 class PersonaConfig(BaseModel):
     style: str | None = None  # None = British butler, in the chosen language
-    max_sentences: int = 3
+    max_sentences: int = 2
 
 
 class LLMConfig(BaseModel):
     host: str = "http://localhost:11434"
-    model: str = "qwen3.5:9b"
+    model: str = "qwen3:8b"
     keep_alive: str = "30m"
     temperature: float = 0.6
     think: bool = False
@@ -95,7 +95,7 @@ class LLMConfig(BaseModel):
 
 
 class STTConfig(BaseModel):
-    model: str = "mlx-community/whisper-large-v3-turbo"
+    model: str = "mlx-community/whisper-small-mlx"
     language: str | None = None  # None = assistant language
 
 
@@ -104,6 +104,24 @@ class TTSConfig(BaseModel):
     voice: str | None = None  # None = language default
     voices_dir: Path = Path("models/voices")
     say_voice: str | None = None
+    length_scale: float | None = None  # speaking speed: < 1 faster, > 1 slower
+    sentence_min_chars: int = 20
+
+
+class AudioConfig(BaseModel):
+    input_device: str | int | None = None  # None = system default
+    output_device: str | int | None = None
+    # Interrupt Jarvis by speaking. Needs headphones, or it will hear itself.
+    barge_in: bool = False
+
+
+class VADConfig(BaseModel):
+    threshold: float = 0.5
+    start_ms: int = 96
+    min_speech_ms: int = 300
+    silence_ms: int = 700  # pause that ends an utterance
+    preroll_ms: int = 300
+    max_utterance_s: float = 30
 
 
 class WakeWordConfig(BaseModel):
@@ -144,6 +162,8 @@ class Settings(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
+    audio: AudioConfig = Field(default_factory=AudioConfig)
+    vad: VADConfig = Field(default_factory=VADConfig)
     wakeword: WakeWordConfig = Field(default_factory=WakeWordConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
@@ -191,6 +211,10 @@ class Settings(BaseSettings):
     @property
     def stt_language(self) -> str:
         return self.stt.language or self.locale.lang
+
+    @property
+    def stt_hint(self) -> str:
+        return self.locale.stt_hint.format(name=self.assistant_name)
 
     @property
     def db_path(self) -> Path:

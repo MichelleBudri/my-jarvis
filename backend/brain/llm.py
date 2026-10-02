@@ -62,6 +62,12 @@ class OllamaClient:
         )
         self._raise_for(resp)
 
+    async def prime(self, system_prompt: str) -> None:
+        """Load the model and pre-process the system prompt so the first reply is fast."""
+        payload = self._payload([{"role": "system", "content": system_prompt}], False, None)
+        payload["options"]["num_predict"] = 1
+        self._raise_for(await self._client.post("/api/chat", json=payload))
+
     async def chat_stream(
         self, messages: list[Message], tools: list | None = None
     ) -> AsyncIterator[ChatChunk]:

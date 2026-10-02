@@ -21,6 +21,7 @@ class Locale:
     voice: str  # default Piper voice
     you_label: str
     farewell: str
+    stt_hint: str  # primes Whisper with the assistant's name and conversational style
     native_prompt: bool = True  # False: English prompt + reply-in-language rule
 
     def format_datetime(self, now: datetime) -> str:
@@ -80,6 +81,7 @@ PT_BR = Locale(
     voice="pt_BR-faber-medium",
     you_label="Você",
     farewell="Às suas ordens{addr}. Até breve.",
+    stt_hint="Olá, {name}. Como está o tempo hoje? Quais são as notícias?",
 )
 
 EN = Locale(
@@ -122,6 +124,7 @@ EN = Locale(
     voice="en_GB-alan-medium",
     you_label="You",
     farewell="At your service{addr}. Until next time.",
+    stt_hint="Hello, {name}. What's the weather like today? Any news?",
 )
 
 OTHER_NAMES = {

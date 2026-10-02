@@ -15,5 +15,6 @@ def setup_logging(level: str = "INFO") -> None:
         handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
         force=True,
     )
-    for noisy in ("httpx", "httpcore"):
+    for noisy in ("httpx", "httpx2", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)

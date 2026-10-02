@@ -16,7 +16,7 @@ user:
 
 persona:
   style: null               # null = British butler
-  max_sentences: 3
+  max_sentences: 2
 
 # Set via JARVIS_CITY; geocoded automatically with Open-Meteo
 location:
@@ -24,21 +24,31 @@ location:
 
 llm:
   host: http://localhost:11434
-  model: qwen3.5:9b        # lighter: qwen3.5:4b
+  model: qwen3:8b          # compare others with `python -m backend bench`
   keep_alive: 30m           # keep the model loaded to cut latency
   temperature: 0.6
   think: false              # thinking mode adds seconds of latency
   context_messages: 20
 
 stt:
-  model: mlx-community/whisper-large-v3-turbo
+  model: mlx-community/whisper-small-mlx   # more accurate, ~0.8 s slower: whisper-large-v3-turbo
   language: null            # null = assistant language
+
+audio:
+  input_device: null        # null = system default (see `python -m sounddevice`)
+  output_device: null
+  barge_in: false           # interrupt by speaking; needs headphones
+
+vad:
+  threshold: 0.5
+  silence_ms: 700           # pause that ends an utterance
 
 tts:
   engine: piper             # piper | say
   voice: null               # null = language default
   voices_dir: models/voices
   say_voice: null
+  length_scale: null        # speaking speed: < 1 faster, > 1 slower
 
 wakeword:
   model: hey_jarvis         # openWakeWord pre-trained model

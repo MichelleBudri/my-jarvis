@@ -19,6 +19,8 @@ def fake_ollama(captured: dict):
                 "message": {"role": "assistant", "content": ""},
                 "done": True,
                 "eval_count": 20,
+                "prompt_eval_count": 12,
+                "prompt_eval_duration": 100_000_000,
                 "eval_duration": 500_000_000,
             },
         ]
@@ -48,12 +50,33 @@ def test_conversation_streams_and_persists(tmp_path):
     assert payload["model"] == s.llm.model
     assert payload["stream"] is True and payload["think"] is False
     assert payload["messages"][0]["role"] == "system"
-    assert payload["messages"][-1] == {"role": "user", "content": "Olá, Jarvis"}
+    last = payload["messages"][-1]
+    assert last["role"] == "user" and last["content"].startswith("[Contexto:")
+    assert last["content"].endswith("\nOlá, Jarvis")
 
-    assert [m["role"] for m in store.recent(conv.id, 10)] == ["user", "assistant"]
+    stored = store.recent(conv.id, 10)
+    assert [m["role"] for m in stored] == ["user", "assistant"]
+    assert stored[0]["content"] == "Olá, Jarvis"  # the context note is not persisted
     assert conv.last_stats.first_token_s is not None
     assert round(conv.last_stats.tokens_per_second) == 40
+    assert conv.last_stats.prompt_tokens == 12
 
 
 def test_tokens_per_second_none_without_stats():
     assert ChatChunk().tokens_per_second is None
+
+
+def test_prime_sends_only_the_system_prompt(tmp_path):
+    captured: dict = {}
+
+    def handler(request):
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"message": {"content": "."}, "done": True})
+
+    s = Settings()
+    client = httpx.AsyncClient(base_url="http://ollama", transport=httpx.MockTransport(handler))
+    conv = Conversation(s, OllamaClient(s.llm, client=client), MemoryStore(tmp_path / "t.db"))
+    asyncio.run(conv.prime())
+    payload = captured["payload"]
+    assert payload["messages"] == [{"role": "system", "content": conv.system_prompt}]
+    assert payload["options"]["num_predict"] == 1 and payload["stream"] is False

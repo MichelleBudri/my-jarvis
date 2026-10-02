@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from backend.brain.llm import OllamaClient
-from backend.brain.prompts import build_system_prompt
+from backend.brain.prompts import build_context_note, build_system_prompt
 from backend.config import Settings
 from backend.memory.store import MemoryStore
 
@@ -17,6 +17,8 @@ class TurnStats:
     first_token_s: float | None = None
     total_s: float = 0.0
     tokens_per_second: float | None = None
+    prompt_tokens: int | None = None  # tokens Ollama had to (re)process; low = cache hit
+    prompt_eval_s: float | None = None
 
 
 class Conversation:
@@ -32,16 +34,21 @@ class Conversation:
         self.store = store
         self.id = conversation_id or store.new_conversation()
         self.last_stats = TurnStats()
+        self.system_prompt = build_system_prompt(settings)
+
+    async def prime(self) -> None:
+        await self.llm.prime(self.system_prompt)
 
     def reset(self) -> None:
         self.id = self.store.new_conversation()
 
     def _messages(self, user_text: str) -> list[dict[str, str]]:
         history = self.store.recent(self.id, self.s.llm.context_messages)
+        note = build_context_note(self.s, first_turn=not history)
         return [
-            {"role": "system", "content": build_system_prompt(self.s)},
+            {"role": "system", "content": self.system_prompt},
             *history,
-            {"role": "user", "content": user_text},
+            {"role": "user", "content": f"{note}\n{user_text}"},
         ]
 
     async def reply(self, user_text: str) -> AsyncIterator[str]:
@@ -59,6 +66,9 @@ class Conversation:
                     yield chunk.content
                 if chunk.done:
                     stats.tokens_per_second = chunk.tokens_per_second
+                    stats.prompt_tokens = chunk.stats.get("prompt_eval_count")
+                    if ns := chunk.stats.get("prompt_eval_duration"):
+                        stats.prompt_eval_s = ns / 1e9
         finally:
             stats.total_s = time.perf_counter() - start
             self.last_stats = stats

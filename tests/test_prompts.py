@@ -1,7 +1,8 @@
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from backend.brain.prompts import build_system_prompt, period_key, season_key
+from backend.brain.prompts import build_context_note, build_system_prompt, period_key, season_key
 from backend.config import Settings
 from backend.i18n import EN, PT_BR, get_locale
 
@@ -37,34 +38,51 @@ def test_get_locale_normalizes():
 
 
 def test_prompt_for_owner(owner_env):
-    prompt = build_system_prompt(Settings(), now=datetime(2026, 10, 1, 0, 48, tzinfo=TZ))
+    s = Settings()
+    prompt = build_system_prompt(s)
     assert "computador de Alice" in prompt
     assert '"senhora" ou "senhora Alice"' in prompt
     assert "feminino" in prompt
-    assert "primavera" in prompt
-    assert "madrugada" in prompt and '"boa noite"' in prompt
-    assert "Curitiba" in prompt
+    assert "Curitiba" in prompt and "Hemisfério sul" in prompt
     assert "NÃO tem acesso" in prompt
+    note = build_context_note(s, datetime(2026, 10, 1, 0, 48, tzinfo=TZ), first_turn=True)
+    assert note == (
+        "[Contexto: quinta-feira, 1 de outubro de 2026, 00:48, madrugada, primavera. "
+        'Início da conversa: cumprimente com "boa noite".]'
+    )
+
+
+def test_system_prompt_is_stable_over_time(owner_env):
+    # Any change here invalidates Ollama's prompt cache and adds seconds of latency.
+    assert build_system_prompt(Settings()) == build_system_prompt(Settings())
+    assert not re.search(r"\d{2}:\d{2}", build_system_prompt(Settings()))
 
 
 def test_prompt_without_owner_is_neutral():
-    prompt = build_system_prompt(Settings(), now=datetime(2026, 10, 1, 9, tzinfo=TZ))
-    assert "quem o utiliza" in prompt
-    assert "não marquem gênero" in prompt
-    assert "Estação" not in prompt  # no location, no season
+    s = Settings()
+    assert "quem o utiliza" in build_system_prompt(s)
+    assert "não marquem gênero" in build_system_prompt(s)
+    note = build_context_note(s, now=datetime(2026, 10, 1, 9, tzinfo=TZ))
+    assert "primavera" not in note  # no location, no season
 
 
 def test_prompt_in_english(owner_env, monkeypatch):
     monkeypatch.setenv("JARVIS_LANGUAGE", "en-GB")
-    prompt = build_system_prompt(Settings(), now=datetime(2026, 10, 1, 9, tzinfo=TZ))
+    s = Settings()
+    prompt = build_system_prompt(s)
     assert "You are Jarvis" in prompt
     assert 'address her as "madam"' in prompt
-    assert "spring (southern hemisphere)" in prompt
-    assert '"good morning"' in prompt
-    assert "British butler" in prompt
+    assert "Southern hemisphere" in prompt and "British butler" in prompt
+    note = build_context_note(s, datetime(2026, 10, 1, 9, tzinfo=TZ), first_turn=True)
+    assert "spring" in note and '"good morning"' in note
 
 
 def test_prompt_other_language_asks_reply_in_it(monkeypatch):
     monkeypatch.setenv("JARVIS_LANGUAGE", "es")
-    prompt = build_system_prompt(Settings(), now=datetime(2026, 10, 1, 9, tzinfo=TZ))
-    assert "Always reply in español" in prompt
+    assert "Always reply in español" in build_system_prompt(Settings())
+
+
+def test_greeting_hint_only_on_first_turn(owner_env):
+    s, now = Settings(), datetime(2026, 10, 1, 20, tzinfo=TZ)
+    assert '"boa noite"' in build_context_note(s, now, first_turn=True)
+    assert "cumprimente" not in build_context_note(s, now, first_turn=False)

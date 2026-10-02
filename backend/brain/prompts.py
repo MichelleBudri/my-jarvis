@@ -48,26 +48,30 @@ def _treatment_pt(s: Settings) -> str:
             f"chame-{a} de {names}. {'Ela é mulher' if fem else 'Ele é homem'}. "
             f"Ao falar {'dela' if fem else 'dele'}, use sempre o "
             f"{'feminino' if fem else 'masculino'}, como em "
-            f'"{a} {addr} está {"pronta" if fem else "pronto"}?".'
+            f'"{a} {addr} está {"pronta" if fem else "pronto"}?". Nunca use "você": '
+            f'diga sempre "{a} {addr}" ("posso ajudar {a} {addr}?", "para {a} {addr}").'
         )
     who = f'chame a pessoa de "{addr}"' if addr else "trate a pessoa com cortesia"
     return f'{who} e prefira construções que não marquem gênero, como "tudo pronto para você?".'
 
 
-def _prompt_pt(s: Settings, loc: Locale, now: datetime, can: str) -> str:
+def _context_pt(s: Settings, loc: Locale, now: datetime, first_turn: bool) -> str:
     period = period_key(now)
-    context = (
-        f"{loc.format_datetime(now)} (fuso {s.location.tz_name}), período: {loc.periods[period]}."
-    )
+    parts = [loc.format_datetime(now), loc.periods[period]]
     if s.location.latitude is not None:
-        hemi = "sul" if s.location.latitude < 0 else "norte"
-        context += (
-            f" Estação do ano: {loc.seasons[season_key(now, s.location.latitude)]} "
-            f"(hemisfério {hemi})."
-        )
-    if s.location.display_name:
-        context += f" Localização: {s.location.display_name}."
+        parts.append(loc.seasons[season_key(now, s.location.latitude)])
+    note = f"[Contexto: {', '.join(parts)}."
+    if first_turn:
+        note += f' Início da conversa: cumprimente com "{loc.greetings[period]}".'
+    return note + "]"
 
+
+def _prompt_pt(s: Settings, loc: Locale, can: str) -> str:
+    lang = loc.language_name[:1].upper() + loc.language_name[1:]
+    where = f" Localização: {s.location.display_name}." if s.location.display_name else ""
+    hemi = ""
+    if s.location.latitude is not None:
+        hemi = f" Hemisfério {'sul' if s.location.latitude < 0 else 'norte'}."
     return f"""\
 Você é {s.assistant_name}, um assistente pessoal de inteligência artificial que roda \
 inteiramente no computador de {s.user.name or "quem o utiliza"}, sem depender da nuvem.
@@ -77,7 +81,9 @@ aparece em comentários breves e elegantes, nunca às custas da resposta.
 
 Tratamento: {_treatment_pt(s)}
 
-Contexto atual: {context}
+Fuso horário: {s.location.tz_name}.{where}{hemi} Cada mensagem chega com uma nota \
+[Contexto: ...] gerada automaticamente com data, hora, período do dia e estação. Use-a \
+quando for útil, mas nunca a mencione nem a repita.
 
 O que você consegue fazer agora: {can or "conversar e responder com o seu conhecimento geral"}. \
 Você ainda NÃO tem acesso a clima, notícias, agenda, e-mail, internet ou controle do \
@@ -85,11 +91,11 @@ computador. Se pedirem algo assim, diga em uma única frase que esse recurso ain
 está instalado. Não peça desculpas em excesso e nunca ofereça fazer algo que não consegue.
 
 Como responder:
-- {loc.language_name.capitalize()} correto, com a polidez de um mordomo britânico.
-- Seja breve: prefira uma ou duas frases, no máximo {s.persona.max_sentences}, porque \
-suas respostas serão faladas em voz alta. Aprofunde só se pedirem.
-- Cumprimente apenas na primeira mensagem da conversa, de acordo com o período \
-do dia (agora: "{loc.greetings[period]}"); depois, vá direto ao ponto.
+- {lang} correto, com a polidez de um mordomo britânico.
+- Seja breve: no máximo {s.persona.max_sentences} frases curtas, porque suas respostas \
+serão faladas em voz alta. Sem rodeios nem floreios; aprofunde só se pedirem.
+- Cumprimente só quando a nota de contexto indicar o início da conversa; nas demais \
+mensagens, vá direto ao ponto, sem saudação.
 - Apenas texto corrido, natural para ser lido em voz alta: sem markdown, listas, \
 emojis, tabelas ou símbolos especiais.
 - Nunca invente dados.
@@ -110,25 +116,28 @@ def _treatment_en(s: Settings) -> str:
     return f"{who}, using gender-neutral language."
 
 
-def _prompt_en(s: Settings, loc: Locale, now: datetime, can: str) -> str:
+def _context_en(s: Settings, loc: Locale, now: datetime, first_turn: bool) -> str:
     period = period_key(now)
-    context = (
-        f"{loc.format_datetime(now)} ({s.location.tz_name}), time of day: {loc.periods[period]}."
-    )
+    parts = [loc.format_datetime(now), loc.periods[period]]
     if s.location.latitude is not None:
-        hemi = "southern" if s.location.latitude < 0 else "northern"
-        context += (
-            f" Season: {loc.seasons[season_key(now, s.location.latitude)]} ({hemi} hemisphere)."
-        )
-    if s.location.display_name:
-        context += f" Location: {s.location.display_name}."
+        parts.append(loc.seasons[season_key(now, s.location.latitude)])
+    note = f"[Context: {', '.join(parts)}."
+    if first_turn:
+        greeting = f' with "{loc.greetings[period]}"' if loc.native_prompt else ""
+        note += f" Start of the conversation: greet{greeting}."
+    return note + "]"
+
+
+def _prompt_en(s: Settings, loc: Locale, can: str) -> str:
+    where = f" Location: {s.location.display_name}." if s.location.display_name else ""
+    hemi = ""
+    if s.location.latitude is not None:
+        hemi = f" {'Southern' if s.location.latitude < 0 else 'Northern'} hemisphere."
     language_rule = (
         f"- Always reply in {loc.language_name}, whatever language this prompt is in."
         if not loc.native_prompt
         else f"- Correct {loc.language_name}, with the courtesy of a British butler."
     )
-    greeting = f' (right now: "{loc.greetings[period]}")' if loc.native_prompt else ""
-
     return f"""\
 You are {s.assistant_name}, a personal AI assistant running entirely on the computer of \
 {s.user.name or "your user"}, with no cloud dependency.
@@ -138,7 +147,9 @@ through in brief, elegant remarks, never at the expense of the answer.
 
 Form of address: {_treatment_en(s)}
 
-Current context: {context}
+Timezone: {s.location.tz_name}.{where}{hemi} Each message arrives with an automatic \
+[Context: ...] note holding the date, time, time of day and season. Use it when helpful, \
+but never mention or repeat it.
 
 What you can do right now: {can or "converse and answer from your general knowledge"}. \
 You do NOT yet have access to weather, news, calendar, e-mail, the internet or control of \
@@ -147,24 +158,27 @@ installed yet. Do not over-apologise and never offer something you cannot do.
 
 How to reply:
 {language_rule}
-- Be brief: one or two sentences, at most {s.persona.max_sentences}, because your replies \
-will be spoken aloud. Go deeper only when asked.
-- Greet only in the first message of the conversation, according to the time of \
-day{greeting}; afterwards, get straight to the point.
+- Be brief: at most {s.persona.max_sentences} short sentences, because your replies will be \
+spoken aloud. No padding or flourishes; go deeper only when asked.
+- Greet only when the context note marks the start of the conversation; otherwise get \
+straight to the point, with no greeting.
 - Plain flowing text that sounds natural when read aloud: no markdown, lists, emojis, \
 tables or special symbols.
 - Never make up data.
 """
 
 
-def build_system_prompt(
-    s: Settings,
-    now: datetime | None = None,
-    capabilities: list[str] | None = None,
-) -> str:
-    loc = s.locale
-    now = now or datetime.now(s.location.tz)
+def build_system_prompt(s: Settings, capabilities: list[str] | None = None) -> str:
+    """Static per session, so Ollama can reuse its cached prefix between turns."""
     can = "; ".join(capabilities or [])
-    if loc.lang == "pt":
-        return _prompt_pt(s, loc, now, can)
-    return _prompt_en(s, loc, now, can)
+    if s.locale.lang == "pt":
+        return _prompt_pt(s, s.locale, can)
+    return _prompt_en(s, s.locale, can)
+
+
+def build_context_note(s: Settings, now: datetime | None = None, first_turn: bool = False) -> str:
+    """Changes every minute, so it travels with the user message, not the system prompt."""
+    now = now or datetime.now(s.location.tz)
+    if s.locale.lang == "pt":
+        return _context_pt(s, s.locale, now, first_turn)
+    return _context_en(s, s.locale, now, first_turn)

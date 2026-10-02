@@ -34,8 +34,48 @@ def check_platform() -> Check:
 
 
 def check_python() -> Check:
-    ok = sys.version_info >= (3, 12)
-    return Check("Python ≥ 3.12", ok, platform.python_version())
+    ok = (3, 12) <= sys.version_info[:2] < (3, 14)
+    return Check("Python 3.12–3.13", ok, platform.python_version())
+
+
+def check_audio(s: Settings) -> list[Check]:
+    try:
+        import sounddevice as sd
+    except Exception as exc:  # noqa: BLE001
+        return [Check("Audio devices", False, f"sounddevice unavailable: {exc}", required=False)]
+    checks = []
+    for kind, label, device in (
+        ("input", "Microphone", s.audio.input_device),
+        ("output", "Speakers", s.audio.output_device),
+    ):
+        try:
+            info = sd.query_devices(device, kind=kind)
+            checks.append(Check(label, True, info["name"], required=False))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(Check(label, False, str(exc), required=False))
+    return checks
+
+
+def check_speech_models(s: Settings) -> list[Check]:
+    checks = []
+    try:
+        import pysilero_vad  # noqa: F401
+
+        checks.append(Check("Voice activity detection", True, "Silero VAD", required=False))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(Check("Voice activity detection", False, str(exc), required=False))
+    try:
+        import mlx_whisper  # noqa: F401
+        from huggingface_hub import try_to_load_from_cache
+
+        cached = isinstance(try_to_load_from_cache(s.stt.model, "config.json"), str)
+        detail = s.stt.model if cached else "not downloaded: run ./scripts/setup.sh"
+        checks.append(Check("Speech recognition", cached, detail, required=False))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            Check("Speech recognition", False, f"mlx-whisper unavailable: {exc}", required=False)
+        )
+    return checks
 
 
 def check_ollama(s: Settings) -> list[Check]:
@@ -126,6 +166,8 @@ def run() -> int:
         check_location(s),
         *check_ollama(s),
         check_voice(s),
+        *check_speech_models(s),
+        *check_audio(s),
     ]
 
     table = Table(title=f"{s.assistant_name} · doctor", show_lines=False)

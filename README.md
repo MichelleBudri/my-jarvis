@@ -7,7 +7,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-1_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-2_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
@@ -59,7 +59,7 @@ flowchart LR
     MIC(["🎙️ Microphone"]) --> WAKE["Wake word<br/><sub>openWakeWord</sub>"]
     WAKE --> VAD["Speech detection<br/><sub>Silero VAD</sub>"]
     VAD --> STT["Transcription<br/><sub>mlx-whisper</sub>"]
-    STT --> LLM{{"🧠 Brain<br/><sub>Ollama · qwen3.5</sub>"}}
+    STT --> LLM{{"🧠 Brain<br/><sub>Ollama · qwen3</sub>"}}
     LLM <--> TOOLS["Tools<br/><sub>weather · news · system</sub>"]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
@@ -75,23 +75,26 @@ flowchart LR
 ## ◈ Quick start
 
 > [!NOTE]
-> Requires macOS on Apple Silicon and [Homebrew](https://brew.sh). Tested on an M4 with 16 GB running macOS 26.
+> Requires macOS on Apple Silicon and [Homebrew](https://brew.sh). Python 3.12 is installed automatically by uv. Tested on an M4 with 16 GB running macOS 26.
 
 ```bash
 git clone https://github.com/MichelleBudri/my-jarvis.git && cd my-jarvis
 cp .env.example .env        # your name, city and language
 ./scripts/setup.sh          # installs uv + Ollama, pulls the model and voice, runs a health check
-uv run python -m backend chat
+uv run python -m backend voice  # talk to Jarvis
 ```
 
-The setup downloads the model (`qwen3.5:9b`, about 6.6 GB) and the Piper voice for your language.
+The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech recognition model (`whisper-small`, about 0.5 GB) and the Piper voice for your language.
 
 ### Commands
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend chat` | Text chat with streaming replies (`-r` resumes the last conversation) |
-| `uv run python -m backend doctor` | Health check: Ollama, model, voice, owner, location |
+| `uv run python -m backend voice` | Voice conversation: speak, pause, and Jarvis answers out loud |
+| `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
+| `uv run python -m backend doctor` | Health check: Ollama, models, voice, microphone, owner, location |
+| `uv run python -m backend bench [models...]` | Compare LLM latency across Ollama models over a short scripted conversation |
+| `uv run python -m backend bench-stt [models...]` | Record one phrase and compare Whisper models on it |
 | `uv run python -m backend prompt` | Print the current system prompt |
 | `uv run python -m backend config` | Print the effective configuration |
 | `uv run pytest` · `uv run ruff check .` | Tests and lint |
@@ -132,16 +135,24 @@ The city is resolved to coordinates and a timezone with the [Open-Meteo geocodin
 The model, voice and news feeds are set in [`config.yaml`](config.yaml). Any key can be overridden with an environment variable, using `__` between sections:
 
 ```bash
-JARVIS_LLM__MODEL=qwen3.5:4b uv run python -m backend chat
+JARVIS_LLM__MODEL=qwen3.5:4b uv run python -m backend voice
 ```
 
 </details>
 
 <details>
-<summary><b>Microphone permission</b> (from Phase 2)</summary>
+<summary><b>Voice and microphone</b></summary>
 <br>
 
 The first time Jarvis captures audio, macOS asks for microphone access for the app running it (Terminal, iTerm, VS Code...). If you deny it by mistake, enable it in **System Settings → Privacy & Security → Microphone**.
+
+By default Jarvis is half duplex: it stops listening while it thinks and speaks, so it never hears itself through the speakers. With headphones you can turn on barge-in and interrupt it mid-sentence:
+
+```bash
+JARVIS_AUDIO__BARGE_IN=true uv run python -m backend voice
+```
+
+Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 700), `JARVIS_TTS__LENGTH_SCALE` (speaking speed, below 1 is faster), and `JARVIS_AUDIO__INPUT_DEVICE` / `_OUTPUT_DEVICE` (list devices with `uv run python -m sounddevice`).
 
 </details>
 
@@ -151,8 +162,8 @@ The first time Jarvis captures audio, macOS asks for microphone access for the a
 |:-:|---|---|
 | 0 | Foundation: settings, setup script, health check | ✅ Done |
 | 1 | Text chat: streaming LLM, persona, history, personalization | ✅ Done |
-| 2 | Voice in and out: VAD, Whisper, streaming Piper, barge-in | 🔜 Next |
-| 3 | Wake word: "Hey Jarvis", state machine | ⏳ Planned |
+| 2 | Voice in and out: VAD, Whisper, streaming Piper, barge-in | ✅ Done |
+| 3 | Wake word: "Hey Jarvis", state machine | 🔜 Next |
 | 4 | Tools: weather, AI news, system, timers | ⏳ Planned |
 | 5 | Activation briefing | ⏳ Planned |
 | 6 | Holographic HUD | ⏳ Planned |

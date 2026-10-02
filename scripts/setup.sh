@@ -66,5 +66,10 @@ if [[ ! -f "$VOICE_PATH" ]]; then
 fi
 ok "voice $VOICE"
 
+STT_MODEL="$(read_cfg 's.stt.model')"
+info "Downloading speech recognition model $STT_MODEL..."
+uv run --quiet python -c "from huggingface_hub import snapshot_download as d; d('$STT_MODEL')"
+ok "speech model $STT_MODEL"
+
 echo
 uv run python -m backend doctor
