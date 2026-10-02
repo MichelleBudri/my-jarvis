@@ -42,6 +42,16 @@ def echoes_hint(text: str, hint: str | None) -> bool:
     return t == h or (len(t) >= 0.6 * len(h) and t in h)
 
 
+_WAKE_PREFIXES = ("", "hey", "hei", "ei", "ey", "oi", "olá", "ola", "ok", "okay", "hi", "hello")
+
+
+def is_wake_phrase(text: str, name: str = "Jarvis") -> bool:
+    """True when the user only called the assistant ("Hey Jarvis.") without a request."""
+    norm = _normalize(text)
+    names = {"jarvis", _normalize(name)}
+    return any(norm == f"{p} {n}".strip() for p in _WAKE_PREFIXES for n in names)
+
+
 class WhisperSTT:
     def __init__(self, model: str, language: str, hint: str | None = None) -> None:
         self.model = model

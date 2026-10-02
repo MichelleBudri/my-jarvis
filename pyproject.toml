@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings[yaml]>=2.3",
     "rich>=13.7",
+    "openwakeword>=0.6",
 ]
 
 [dependency-groups]
@@ -26,6 +27,8 @@ dev = [
 
 [tool.uv]
 package = false
+# macOS only (MLX, Metal). Also skips Linux-only wheels such as tflite-runtime.
+environments = ["sys_platform == 'darwin'"]
 
 [tool.ruff]
 line-length = 100

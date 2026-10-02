@@ -75,7 +75,29 @@ def check_speech_models(s: Settings) -> list[Check]:
         checks.append(
             Check("Speech recognition", False, f"mlx-whisper unavailable: {exc}", required=False)
         )
+    checks.append(check_wakeword(s))
     return checks
+
+
+def check_wakeword(s: Settings) -> Check:
+    if not s.wakeword.enabled:
+        return Check("Wake word", True, "disabled: always listening", required=False)
+    files = [s.wakeword_path, s.wakeword_dir / "melspectrogram.onnx"]
+    files.append(s.wakeword_dir / "embedding_model.onnx")
+    missing = [f.name for f in files if not f.exists()]
+    if missing:
+        return Check(
+            "Wake word",
+            False,
+            f"missing {', '.join(missing)}: run ./scripts/setup.sh",
+            required=False,
+        )
+    try:
+        import openwakeword  # noqa: F401
+    except Exception as exc:  # noqa: BLE001
+        return Check("Wake word", False, f"openwakeword unavailable: {exc}", required=False)
+    detail = f"{s.wakeword_path.name} · threshold {s.wakeword.threshold}"
+    return Check("Wake word", True, detail, required=False)
 
 
 def check_ollama(s: Settings) -> list[Check]:

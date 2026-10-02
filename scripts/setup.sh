@@ -71,5 +71,19 @@ info "Downloading speech recognition model $STT_MODEL..."
 uv run --quiet python -c "from huggingface_hub import snapshot_download as d; d('$STT_MODEL')"
 ok "speech model $STT_MODEL"
 
+WAKE_PATH="$(read_cfg 's.wakeword_path')"
+WAKE_DIR="$(read_cfg 's.wakeword_dir')"
+WAKE_BASE="https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
+mkdir -p "$WAKE_DIR"
+for FILE in melspectrogram.onnx embedding_model.onnx; do
+  [[ -f "$WAKE_DIR/$FILE" ]] || curl -fsL -o "$WAKE_DIR/$FILE" "$WAKE_BASE/$FILE"
+done
+if [[ ! -f "$WAKE_PATH" ]]; then
+  info "Downloading wake word model $(basename "$WAKE_PATH")..."
+  curl -fsL -o "$WAKE_PATH" "$WAKE_BASE/$(basename "$WAKE_PATH")" \
+    || fail "No pre-trained wake word named $(basename "$WAKE_PATH")"
+fi
+ok "wake word $(basename "$WAKE_PATH" .onnx)"
+
 echo
 uv run python -m backend doctor

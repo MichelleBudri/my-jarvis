@@ -23,6 +23,7 @@ from backend.i18n import Locale, get_locale, normalize_code
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = ROOT_DIR / "config.yaml"
 ENV_FILE = ROOT_DIR / ".env"
+WAKEWORD_VERSION = "v0.1"  # openWakeWord pre-trained model version
 
 # Flat variables for personal data, mapped onto the nested settings.
 SIMPLE_ENV: dict[str, tuple[str, str]] = {
@@ -125,8 +126,13 @@ class VADConfig(BaseModel):
 
 
 class WakeWordConfig(BaseModel):
-    model: str = "hey_jarvis"
+    enabled: bool = True
+    model: str = "hey_jarvis"  # openWakeWord pre-trained name, or a path to a custom .onnx
+    models_dir: Path = Path("models/wakeword")
     threshold: float = 0.5
+    listen_timeout_s: float = 6  # after the wake word, how long to wait for a request
+    follow_up_s: float = 8  # after a reply, keep listening without the wake word
+    chime: bool = True
 
 
 class NewsConfig(BaseModel):
@@ -215,6 +221,19 @@ class Settings(BaseSettings):
     @property
     def stt_hint(self) -> str:
         return self.locale.stt_hint.format(name=self.assistant_name)
+
+    @property
+    def wakeword_dir(self) -> Path:
+        d = self.wakeword.models_dir
+        return d if d.is_absolute() else ROOT_DIR / d
+
+    @property
+    def wakeword_path(self) -> Path:
+        model = self.wakeword.model
+        if model.endswith(".onnx"):
+            path = Path(model)
+            return path if path.is_absolute() else ROOT_DIR / path
+        return self.wakeword_dir / f"{model}_{WAKEWORD_VERSION}.onnx"
 
     @property
     def db_path(self) -> Path:

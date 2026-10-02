@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("-s", "--speak", action="store_true", help="read replies aloud")
     voice = sub.add_parser("voice", help="talk to Jarvis with your voice")
     voice.add_argument("-r", "--resume", action="store_true", help="resume the last conversation")
+    voice.add_argument(
+        "--no-wake", action="store_true", help="always listen, without the wake word"
+    )
+    sub.add_parser("wake-test", help="show live wake word scores to tune the threshold")
     sub.add_parser("prompt", help="print the current system prompt")
     bench = sub.add_parser("bench", help="compare LLM latency across models")
     bench.add_argument("models", nargs="*", help="Ollama models (default: the configured one)")
@@ -52,7 +56,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice":
         from backend.voice import run_voice
 
-        return _run(run_voice(settings, resume=args.resume))
+        wake_word = False if args.no_wake else None
+        return _run(run_voice(settings, resume=args.resume, wake_word=wake_word))
+    if args.command == "wake-test":
+        from backend.wake_test import run_wake_test
+
+        return _run(run_wake_test(settings))
     if args.command == "bench":
         from backend.bench import run_bench
 

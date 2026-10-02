@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 from collections.abc import AsyncIterator, Callable
 
 import numpy as np
 from rich.console import Console
 
+from backend.audio import earcon
 from backend.audio.sentences import SentenceSplitter, clean_for_speech
+from backend.audio.stt import is_wake_phrase
 from backend.audio.tts import PiperSpeaker, SaySpeaker, Speaker
+from backend.audio.wakeword import WakeWordDetector
 from backend.brain.conversation import Conversation
 from backend.brain.llm import LLMError, OllamaClient
 from backend.config import Settings
 from backend.memory.store import MemoryStore
+from backend.state import State, StateMachine
 from backend.tools.geocode import resolve_location
 
 console = Console(highlight=False)
@@ -52,35 +57,87 @@ async def reply_aloud(
 
 
 class VoiceLoop:
-    def __init__(self, s: Settings, conv: Conversation, stt, speaker: Speaker, vad, segmenter):
+    """Routes microphone frames by state: wake word while sleeping, VAD while listening."""
+
+    def __init__(
+        self,
+        s: Settings,
+        conv: Conversation,
+        stt,
+        speaker: Speaker,
+        vad,
+        segmenter,
+        wake: WakeWordDetector | None = None,
+        chime: Callable[[np.ndarray], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.s = s
         self.conv = conv
         self.stt = stt
         self.speaker = speaker
         self.vad = vad
         self.segmenter = segmenter
+        self.wake = wake
+        self.chime = chime
+        self.clock = clock
+        self.state = StateMachine(State.SLEEPING if wake else State.LISTENING, clock)
         self.task: asyncio.Task | None = None
         self.mute_until = 0.0
+        self.listen_deadline: float | None = None  # None = listen forever
         self._barged_in = False
 
     @property
     def busy(self) -> bool:
         return self.task is not None and not self.task.done()
 
+    def _listen_for(self, seconds: float) -> None:
+        self.listen_deadline = self.clock() + seconds if self.wake else None
+
+    def _wake_up(self, score: float) -> None:
+        self.vad.reset()
+        self.segmenter.reset()
+        self.state.to(State.LISTENING)
+        self._listen_for(self.s.wakeword.listen_timeout_s)
+        if self.chime:
+            self.chime(earcon.WAKE)
+        console.print(f"\n[cyan]●[/] [dim]listening (wake {score:.2f})[/]")
+
+    def _go_to_sleep(self) -> None:
+        self.state.to(State.SLEEPING)
+        self.listen_deadline = None
+        self.wake.reset()
+        if self.chime:
+            self.chime(earcon.SLEEP)
+        console.print(f'[dim]○ sleeping · say "Hey {self.s.assistant_name}"[/]')
+
     def _after_turn(self, _: asyncio.Task) -> None:
+        self.state.to(State.LISTENING)
         if self._barged_in:
             # The user is mid-sentence: keep the utterance that interrupted us.
             self._barged_in = False
             return
-        self.mute_until = time.monotonic() + ECHO_TAIL_S
+        self.mute_until = self.clock() + ECHO_TAIL_S
+        self._listen_for(ECHO_TAIL_S + self.s.wakeword.follow_up_s)
         self.vad.reset()
         self.segmenter.reset()
 
     def on_frame(self, frame: np.ndarray) -> None:
-        if self.busy and not self.s.audio.barge_in:
-            return  # half duplex: don't listen while thinking or speaking
-        if not self.busy and time.monotonic() < self.mute_until:
+        if self.state.state is State.SLEEPING:
+            if (score := self.wake.detect(frame)) is not None:
+                self._wake_up(score)
             return
+        # Not `busy`: the turn's done-callback may still be pending.
+        working = self.state.state is not State.LISTENING
+        if working and not self.s.audio.barge_in:
+            return  # half duplex: don't listen while thinking or speaking
+        if not working:
+            now = self.clock()
+            if now < self.mute_until:
+                return
+            expired = self.listen_deadline is not None and now >= self.listen_deadline
+            if expired and not self.segmenter.in_speech:
+                self._go_to_sleep()
+                return
         event = self.segmenter.process(frame, self.vad(frame))
         if event.started and self.busy:
             self._barged_in = True
@@ -88,6 +145,7 @@ class VoiceLoop:
             self.task.cancel()
             console.print("\n[dim](interrupted)[/]")
         if event.utterance is not None:
+            self.state.to(State.THINKING)
             self.task = asyncio.create_task(self.handle(event.utterance, time.perf_counter()))
             self.task.add_done_callback(self._after_turn)
 
@@ -96,6 +154,9 @@ class VoiceLoop:
         t0 = time.perf_counter()
         text = await self.stt.transcribe(audio)
         stt_s = time.perf_counter() - t0
+        if text and is_wake_phrase(text, s.assistant_name):
+            console.print(f'[dim](just my name: "{text}" · still listening)[/]')
+            return
         if not text:
             raw = getattr(self.stt, "last_raw", "")
             reason = f'ignored "{raw}"' if raw.strip() else "no speech recognized"
@@ -109,6 +170,8 @@ class VoiceLoop:
         def on_start() -> None:
             nonlocal first_audio
             first_audio = time.perf_counter()
+            if self.state.state is State.THINKING:  # Piper reports from another thread, late
+                self.state.to(State.SPEAKING)
 
         try:
             await reply_aloud(
@@ -133,10 +196,13 @@ class VoiceLoop:
         console.print(f"\n[dim]{' · '.join(details)}[/]")
 
 
-async def run_voice(s: Settings, resume: bool = False) -> int:
+async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = None) -> int:
     from backend.audio.capture import Microphone
     from backend.audio.stt import WhisperSTT
     from backend.audio.vad import SileroVAD, UtteranceSegmenter
+    from backend.audio.wakeword import load_wake_model
+
+    use_wake = s.wakeword.enabled if wake_word is None else wake_word
 
     await resolve_location(s)
     llm = OllamaClient(s.llm)
@@ -146,6 +212,10 @@ async def run_voice(s: Settings, resume: bool = False) -> int:
     speaker = make_speaker(s)
 
     try:
+        wake = None
+        if use_wake:
+            model = load_wake_model(s.wakeword_path, s.wakeword_dir)
+            wake = WakeWordDetector(model, s.wakeword.threshold)
         with console.status("Loading language model, Whisper and voice..."):
             await asyncio.gather(conv.prime(), stt.warmup(), speaker.warmup())
     except Exception as exc:  # noqa: BLE001
@@ -155,12 +225,20 @@ async def run_voice(s: Settings, resume: bool = False) -> int:
         store.close()
         return 1
 
-    loop = VoiceLoop(s, conv, stt, speaker, SileroVAD(), UtteranceSegmenter(s.vad))
+    chime = None
+    if s.wakeword.chime:
+        chime = functools.partial(earcon.play, device=s.audio.output_device)
+    loop = VoiceLoop(
+        s, conv, stt, speaker, SileroVAD(), UtteranceSegmenter(s.vad), wake=wake, chime=chime
+    )
     mic = Microphone(s.audio.input_device)
     mic.start()
     mode = "barge-in on" if s.audio.barge_in else "half duplex"
-    console.print(f"[bold cyan]{s.assistant_name}[/] listening · {s.llm.model} · {mode}")
-    console.print("[dim]Speak naturally. Ctrl+C to quit.[/]")
+    console.print(f"[bold cyan]{s.assistant_name}[/] online · {s.llm.model} · {mode}")
+    if wake:
+        console.print(f'[dim]Say "Hey {s.assistant_name}" to wake me up. Ctrl+C to quit.[/]')
+    else:
+        console.print("[dim]Always listening (wake word off). Speak naturally. Ctrl+C to quit.[/]")
 
     try:
         async for frame in mic.frames():

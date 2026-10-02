@@ -7,7 +7,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-2_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-3_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
@@ -81,18 +81,19 @@ flowchart LR
 git clone https://github.com/MichelleBudri/my-jarvis.git && cd my-jarvis
 cp .env.example .env        # your name, city and language
 ./scripts/setup.sh          # installs uv + Ollama, pulls the model and voice, runs a health check
-uv run python -m backend voice  # talk to Jarvis
+uv run python -m backend voice  # say "Hey Jarvis", then ask
 ```
 
-The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech recognition model (`whisper-small`, about 0.5 GB) and the Piper voice for your language.
+The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech recognition model (`whisper-small`, about 0.5 GB), the Piper voice for your language and the "Hey Jarvis" wake word model (about 4 MB).
 
 ### Commands
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend voice` | Voice conversation: speak, pause, and Jarvis answers out loud |
+| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud (`--no-wake` listens all the time) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
-| `uv run python -m backend doctor` | Health check: Ollama, models, voice, microphone, owner, location |
+| `uv run python -m backend doctor` | Health check: Ollama, models, voice, wake word, microphone, owner, location |
+| `uv run python -m backend wake-test` | Live wake word scores, to tune the detection threshold |
 | `uv run python -m backend bench [models...]` | Compare LLM latency across Ollama models over a short scripted conversation |
 | `uv run python -m backend bench-stt [models...]` | Record one phrase and compare Whisper models on it |
 | `uv run python -m backend prompt` | Print the current system prompt |
@@ -146,6 +147,16 @@ JARVIS_LLM__MODEL=qwen3.5:4b uv run python -m backend voice
 
 The first time Jarvis captures audio, macOS asks for microphone access for the app running it (Terminal, iTerm, VS Code...). If you deny it by mistake, enable it in **System Settings → Privacy & Security → Microphone**.
 
+Jarvis sleeps until it hears **"Hey Jarvis"** (a rising chime confirms it). You can ask in the same breath ("Hey Jarvis, what time is it?") or wait for the chime. After each reply it keeps listening for 8 seconds, so follow-up questions need no wake word; then a falling chime means it went back to sleep. "Ei Jarvis" works too, so the wake word is fine in Portuguese.
+
+```
+sleeping ──"Hey Jarvis"──▶ listening ──speech──▶ thinking ──▶ speaking
+    ▲                       │     ▲                              │
+    └── silence (6 s) ──────┘     └──── reply done (8 s window) ─┘
+```
+
+If it misses you or wakes up by itself, run `uv run python -m backend wake-test` and adjust `JARVIS_WAKEWORD__THRESHOLD` (default 0.5; lower is more sensitive). The timings are `JARVIS_WAKEWORD__LISTEN_TIMEOUT_S` and `_FOLLOW_UP_S`, and `JARVIS_WAKEWORD__CHIME=false` silences the chimes.
+
 By default Jarvis is half duplex: it stops listening while it thinks and speaks, so it never hears itself through the speakers. With headphones you can turn on barge-in and interrupt it mid-sentence:
 
 ```bash
@@ -163,8 +174,8 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 | 0 | Foundation: settings, setup script, health check | ✅ Done |
 | 1 | Text chat: streaming LLM, persona, history, personalization | ✅ Done |
 | 2 | Voice in and out: VAD, Whisper, streaming Piper, barge-in | ✅ Done |
-| 3 | Wake word: "Hey Jarvis", state machine | 🔜 Next |
-| 4 | Tools: weather, AI news, system, timers | ⏳ Planned |
+| 3 | Wake word: "Hey Jarvis", state machine | ✅ Done |
+| 4 | Tools: weather, AI news, system, timers | 🔜 Next |
 | 5 | Activation briefing | ⏳ Planned |
 | 6 | Holographic HUD | ⏳ Planned |
 | 7 | Polish: long-term memory, launch at login, echo cancellation | ⏳ Planned |

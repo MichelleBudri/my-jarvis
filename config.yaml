@@ -51,8 +51,12 @@ tts:
   length_scale: null        # speaking speed: < 1 faster, > 1 slower
 
 wakeword:
-  model: hey_jarvis         # openWakeWord pre-trained model
-  threshold: 0.5
+  enabled: true             # false = always listening (or `voice --no-wake`)
+  model: hey_jarvis         # openWakeWord pre-trained model, or a path to a custom .onnx
+  threshold: 0.5            # tune with `python -m backend wake-test`
+  listen_timeout_s: 6       # after "Hey Jarvis", how long to wait for a request
+  follow_up_s: 8            # after a reply, keep listening without the wake word
+  chime: true               # short tones when waking up and going back to sleep
 
 news:
   cache_minutes: 30
