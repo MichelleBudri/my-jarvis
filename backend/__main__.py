@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 from backend.config import get_settings
 from backend.logging_setup import setup_logging
+
+STARTED_AT = time.perf_counter()  # the briefing reports its latency from here
 
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
@@ -34,6 +37,9 @@ def main(argv: list[str] | None = None) -> int:
     voice.add_argument(
         "--no-wake", action="store_true", help="always listen, without the wake word"
     )
+    voice.add_argument("--no-briefing", action="store_true", help="skip the weather and news")
+    briefing = sub.add_parser("briefing", help="print the activation briefing, with timings")
+    briefing.add_argument("-s", "--speak", action="store_true", help="read it aloud too")
     sub.add_parser("wake-test", help="show live wake word scores to tune the threshold")
     sub.add_parser("prompt", help="print the current system prompt")
     bench = sub.add_parser("bench", help="compare LLM latency across models")
@@ -57,7 +63,20 @@ def main(argv: list[str] | None = None) -> int:
         from backend.voice import run_voice
 
         wake_word = False if args.no_wake else None
-        return _run(run_voice(settings, resume=args.resume, wake_word=wake_word))
+        briefing = False if args.no_briefing else None
+        return _run(
+            run_voice(
+                settings,
+                resume=args.resume,
+                wake_word=wake_word,
+                briefing=briefing,
+                started_at=STARTED_AT,
+            )
+        )
+    if args.command == "briefing":
+        from backend.chat import run_briefing
+
+        return _run(run_briefing(settings, speak=args.speak))
     if args.command == "wake-test":
         from backend.wake_test import run_wake_test
 

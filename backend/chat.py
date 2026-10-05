@@ -131,3 +131,67 @@ async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> in
     addr = f", {s.owner_address}" if s.owner_address else ""
     console.print(f"\n[cyan]{s.assistant_name}:[/] {s.locale.farewell.format(addr=addr)}")
     return 0
+
+
+async def run_briefing(s: Settings, speak: bool = False) -> int:
+    """`python -m backend briefing`: the voice start-up briefing, timed, for tuning it."""
+    import time
+
+    from backend.brain import briefing
+    from backend.brain.prompts import build_greeting
+    from backend.tools.news import NewsService
+    from backend.tools.weather import WeatherService
+
+    start = time.perf_counter()
+    await resolve_location(s)
+    llm = OllamaClient(s.llm)
+    store = MemoryStore(s.db_path)
+    weather = WeatherService(s) if "weather" in s.tools.enabled else None
+    news = NewsService(s) if "news" in s.tools.enabled else None
+    conv = Conversation(s, llm, store, tools=build_registry(s, weather=weather, news=news))
+    speaker = None
+    try:
+        with console.status("Fetching weather and news, loading the model..."):
+            fetching = asyncio.create_task(briefing.fetch(conv, weather, news))
+            await conv.prime()
+            primed = time.perf_counter() - start
+            data = await fetching
+            fetched = time.perf_counter() - start
+        console.print(
+            f"[dim]weather {'ok' if data.weather else 'missing'} · "
+            f"{len(data.news or [])} headlines · model {primed:.2f}s · ready {fetched:.2f}s[/]"
+        )
+        console.print(f"[bold cyan]{s.assistant_name} ›[/] ", end="")
+        times: list[float] = []  # of each piece: greeting and weather (code), then the model
+
+        def on_token(text: str) -> None:
+            times.append(time.perf_counter() - start)
+            echo(text)
+
+        tokens = briefing.stream(conv, data)
+        if speak:
+            from backend.voice import make_speaker, speak_tokens
+
+            speaker = make_speaker(s)
+            await speaker.warmup()
+            await speak_tokens(
+                speaker, tokens, s.tts.sentence_min_chars, s.locale.lang, on_token=on_token
+            )
+        else:
+            async for token in tokens:
+                on_token(token)
+        total = time.perf_counter() - start
+        fixed = bool(build_greeting(s)) + bool(briefing.weather_sentence(conv, data))
+        model_first = times[fixed] if len(times) > fixed else None
+        details = [f"first text {times[0] if times else 0:.2f}s"]
+        if model_first is not None:
+            details.append(f"model first word {model_first:.2f}s")
+        details.append(f"total {total:.2f}s")
+        console.print(f"\n[dim]{' · '.join(details)}[/]")
+    except LLMError as exc:
+        console.print(f"\n[red]Model error: {exc}[/]")
+        return 1
+    finally:
+        await llm.aclose()
+        store.close()
+    return 0

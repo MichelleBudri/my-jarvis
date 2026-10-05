@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from datetime import date
@@ -14,6 +15,7 @@ from backend.tools.registry import Tool, ToolError
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 CACHE_S = 600
+RETRY_AFTER_S = 0.5
 MAX_DAYS = 7
 FAR_KM = 500
 FAR_NOTE = (
@@ -136,11 +138,16 @@ class WeatherService:
         self._cache: dict[tuple, tuple[float, dict]] = {}
 
     async def _get(self, url: str, params: dict) -> dict:
-        if self._client is not None:
-            resp = await self._client.get(url, params=params)
-        else:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url, params=params)
+        # Open-Meteo answers 503 now and then (1 in 6 starts); the next try usually works.
+        for attempt in range(2):
+            if self._client is not None:
+                resp = await self._client.get(url, params=params)
+            else:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(url, params=params)
+            if resp.status_code < 500 or attempt:
+                break
+            await asyncio.sleep(RETRY_AFTER_S)
         resp.raise_for_status()
         return resp.json()
 

@@ -72,6 +72,11 @@ news:
     - https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
     - https://techcrunch.com/category/artificial-intelligence/feed/
 
+briefing:
+  enabled: true             # weather and AI news on start; `voice --no-briefing` skips it
+  headlines: 6              # candidates the model picks the one or two most relevant from
+  fetch_timeout_s: 5        # a source slower than this is left out
+
 server:
   host: 127.0.0.1
   port: 8765

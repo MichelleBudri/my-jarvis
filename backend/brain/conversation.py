@@ -63,6 +63,10 @@ class Conversation:
         # Same list every turn: Ollama renders tools into the cached prompt prefix.
         self._schemas = self.tools.schemas() or None
 
+    @property
+    def tool_schemas(self) -> list[dict[str, Any]] | None:
+        return self._schemas
+
     async def prime(self) -> None:
         await self.llm.prime(self.system_prompt, self._schemas)
 
@@ -81,6 +85,11 @@ class Conversation:
             await self.llm.prime(self.system_prompt, self._schemas, next_turn)
         except Exception as exc:  # noqa: BLE001 - only an optimisation
             log.debug("Cache warm-up failed: %s", exc)
+
+    def schedule_warm(self) -> None:
+        """Warm the cache in the background, while the reply is still being spoken."""
+        if self.warm_after_turn:
+            self._warm_task = asyncio.create_task(self.warm())
 
     def add_assistant_note(self, text: str) -> None:
         """Something said unprompted (a timer going off), so follow-ups have context."""
@@ -278,5 +287,4 @@ class Conversation:
             self.last_stats = stats
             if "".join(parts).strip() or trace:
                 self._persist(user_text, trace, "".join(said).strip())
-                if self.warm_after_turn:  # runs while the reply is still being spoken
-                    self._warm_task = asyncio.create_task(self.warm())
+                self.schedule_warm()

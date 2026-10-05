@@ -149,6 +149,12 @@ class NewsConfig(BaseModel):
     feeds: list[str] = Field(default_factory=list)
 
 
+class BriefingConfig(BaseModel):
+    enabled: bool = True  # weather and AI news on start (`voice --no-briefing` skips it)
+    headlines: int = 6  # candidates the model picks the one or two most relevant from
+    fetch_timeout_s: float = 5  # a source slower than this is left out
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
@@ -181,6 +187,7 @@ class Settings(BaseSettings):
     wakeword: WakeWordConfig = Field(default_factory=WakeWordConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    briefing: BriefingConfig = Field(default_factory=BriefingConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
 
     @property

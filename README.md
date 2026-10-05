@@ -38,8 +38,8 @@ The language model, speech recognition and voice all run locally: no API keys, n
   </tr>
   <tr>
     <td valign="top">
-      <h3>🌦️ Morning briefing</h3>
-      On activation, Jarvis reports the local weather and the latest AI headlines in a few spoken sentences.
+      <h3>🌦️ Activation briefing</h3>
+      On start, Jarvis greets you with the local weather and the one or two AI headlines that matter, fetched while the models load.
     </td>
     <td valign="top">
       <h3>🌍 Multilingual</h3>
@@ -90,9 +90,10 @@ The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech re
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud (`--no-wake` listens all the time) |
+| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news (`--no-briefing` skips it, `--no-wake` listens all the time) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
 | `uv run python -m backend doctor` | Health check: Ollama, models, voice, wake word, microphone, owner, location |
+| `uv run python -m backend briefing` | Print the activation briefing with its timings (`-s` reads it aloud) |
 | `uv run python -m backend wake-test` | Live wake word scores, to tune the detection threshold |
 | `uv run python -m backend bench [models...]` | Compare LLM latency across Ollama models over a short scripted conversation |
 | `uv run python -m backend bench-stt [models...]` | Record one phrase and compare Whisper models on it |
@@ -180,6 +181,8 @@ By default Jarvis is half duplex: it stops listening while it thinks and speaks,
 JARVIS_AUDIO__BARGE_IN=true uv run python -m backend voice
 ```
 
+On start, Jarvis says the briefing: a greeting and today's weather, written from the forecast numbers, then the most relevant AI headlines picked and retold by the model, which writes them while the first part is spoken. It starts about 2 seconds after launch, before speech recognition has finished loading, and ends with a line showing when each part was ready. A source that fails or takes over `JARVIS_BRIEFING__FETCH_TIMEOUT_S` (default 5) is left out. Turn it off with `JARVIS_BRIEFING__ENABLED=false` or `voice --no-briefing`.
+
 Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 700), `JARVIS_TTS__LENGTH_SCALE` (speaking speed, below 1 is faster), and `JARVIS_AUDIO__INPUT_DEVICE` / `_OUTPUT_DEVICE` (list devices with `uv run python -m sounddevice`).
 
 </details>
@@ -193,8 +196,8 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 | 2 | Voice in and out: VAD, Whisper, streaming Piper, barge-in | ✅ Done |
 | 3 | Wake word: "Hey Jarvis", state machine | ✅ Done |
 | 4 | Tools: weather, AI news, system, timers | ✅ Done |
-| 5 | Activation briefing | 🔜 Next |
-| 6 | Holographic HUD | ⏳ Planned |
+| 5 | Activation briefing | ✅ Done |
+| 6 | Holographic HUD | 🔜 Next |
 | 7 | Polish: long-term memory, launch at login, echo cancellation | ⏳ Planned |
 
 

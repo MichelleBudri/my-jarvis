@@ -42,20 +42,19 @@ def make_speaker(s: Settings) -> Speaker:
     return PiperSpeaker(s.voice_path, s.audio.output_device, s.tts.length_scale)
 
 
-async def reply_aloud(
-    conv: Conversation,
+async def speak_tokens(
     speaker: Speaker,
-    user_text: str,
+    tokens: AsyncIterator[str],
     min_chars: int,
+    lang: str,
     on_token: Callable[[str], None] | None = None,
     on_start: Callable[[], None] | None = None,
 ) -> bool:
-    """Stream the LLM reply into the speaker sentence by sentence."""
+    """Stream generated text into the speaker sentence by sentence."""
     splitter = SentenceSplitter(min_chars)
-    lang = conv.s.locale.lang
 
     async def sentences() -> AsyncIterator[str]:
-        async for token in conv.reply(user_text):
+        async for token in tokens:
             if on_token:
                 on_token(token)
             for sentence in splitter.feed(token):
@@ -65,6 +64,45 @@ async def reply_aloud(
             yield spoken
 
     return await speaker.speak(sentences(), on_start=on_start)
+
+
+async def reply_aloud(
+    conv: Conversation,
+    speaker: Speaker,
+    user_text: str,
+    min_chars: int,
+    on_token: Callable[[str], None] | None = None,
+    on_start: Callable[[], None] | None = None,
+) -> bool:
+    """Stream the LLM reply into the speaker sentence by sentence."""
+    return await speak_tokens(
+        speaker, conv.reply(user_text), min_chars, conv.s.locale.lang, on_token, on_start
+    )
+
+
+async def speak_briefing(
+    s: Settings,
+    speaker: Speaker,
+    tokens: AsyncIterator[str],
+    started_at: float,
+    timings: dict[str, float],
+) -> None:
+    """Speak the activation briefing, then print when each part of the startup was ready."""
+    first_audio: float | None = None
+
+    def on_start() -> None:
+        nonlocal first_audio
+        if first_audio is None:
+            first_audio = time.perf_counter()
+
+    console.print(f"\n[bold cyan]{s.assistant_name} ›[/] ", end="")
+    await speak_tokens(
+        speaker, tokens, s.tts.sentence_min_chars, s.locale.lang, on_token=echo, on_start=on_start
+    )
+    details = [f"{name} {at:.2f}s" for name, at in timings.items()]
+    if first_audio is not None:
+        details.insert(0, f"voice {first_audio - started_at:.2f}s after start")
+    console.print(f"\n[dim]briefing · {' · '.join(details)}[/]")
 
 
 def sleep_tool(request_sleep: Callable[[], None]) -> Tool:
@@ -183,6 +221,12 @@ class VoiceLoop:
 
         await self.speaker.speak(sentences())
 
+    def brief(self, task: asyncio.Task) -> None:
+        """Take the activation briefing, started before the loop existed, as the current turn."""
+        self.state.to(State.SPEAKING)
+        self.task = task
+        task.add_done_callback(self._after_turn)
+
     def _after_turn(self, _: asyncio.Task) -> None:
         self.state.to(State.LISTENING)
         if self._sleep_requested:
@@ -288,13 +332,24 @@ class VoiceLoop:
         console.print(f"\n[dim]{' · '.join(details)}[/]")
 
 
-async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = None) -> int:
+async def run_voice(
+    s: Settings,
+    resume: bool = False,
+    wake_word: bool | None = None,
+    briefing: bool | None = None,
+    started_at: float | None = None,
+) -> int:
     from backend.audio.capture import Microphone
     from backend.audio.stt import WhisperSTT
     from backend.audio.vad import SileroVAD, UtteranceSegmenter
     from backend.audio.wakeword import load_wake_model
+    from backend.brain import briefing as brief
+    from backend.tools.news import NewsService
+    from backend.tools.weather import WeatherService
 
+    started_at = started_at or time.perf_counter()
     use_wake = s.wakeword.enabled if wake_word is None else wake_word
+    use_briefing = s.briefing.enabled if briefing is None else briefing
 
     await resolve_location(s)
     llm = OllamaClient(s.llm)
@@ -302,21 +357,65 @@ async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = 
     # The callbacks reach `loop`, created below, only after startup.
     timers = TimerManager(s, on_fire=lambda t: loop.announce(timers.announcement(t)))
     extra = [sleep_tool(lambda: loop.request_sleep())] if use_wake else []
-    tools = build_registry(s, timers, extra)
+    # Shared with the briefing, so "more news?" right after it hits the cache.
+    weather = WeatherService(s) if "weather" in s.tools.enabled else None
+    news = NewsService(s) if "news" in s.tools.enabled else None
+    tools = build_registry(s, timers, extra, weather, news)
     conv_id = store.last_conversation() if resume else None
     conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
     stt = WhisperSTT(s.stt.model, s.stt_language, s.stt_hint)
     speaker = make_speaker(s)
 
+    mode = "barge-in on" if s.audio.barge_in else "half duplex"
+    console.print(f"[bold cyan]{s.assistant_name}[/] · {s.llm.model} · {mode}")
+    console.print(f"[dim]Tools: {', '.join(tools.names) or 'none'}[/]")
+    if use_wake:
+        console.print(f'[dim]Say "Hey {s.assistant_name}" to wake me up. Ctrl+C to quit.[/]')
+    else:
+        console.print("[dim]Always listening (wake word off). Speak naturally. Ctrl+C to quit.[/]")
+
+    timings: dict[str, float] = {}  # when each part was ready, since start
+
+    async def ready(name: str, work):
+        result = await work
+        timings[name] = time.perf_counter() - started_at
+        return result
+
+    def load_wake() -> WakeWordDetector | None:
+        if not use_wake:
+            return None
+        return WakeWordDetector(
+            load_wake_model(s.wakeword_path, s.wakeword_dir), s.wakeword.threshold
+        )
+
+    # The briefing needs only the voice and its data: it starts while the language
+    # model, Whisper and the wake word are still loading, and the model's part waits
+    # for them inside Ollama.
+    fetching = asyncio.create_task(ready("data", brief.fetch(conv, weather, news)))
+    if not use_briefing:
+        fetching.cancel()
+    loading = asyncio.gather(
+        ready("model", conv.prime()),
+        ready("whisper", stt.warmup()),
+        ready("wake word", asyncio.to_thread(load_wake)),
+    )
+    speaking: asyncio.Task | None = None
     try:
-        wake = None
-        if use_wake:
-            model = load_wake_model(s.wakeword_path, s.wakeword_dir)
-            wake = WakeWordDetector(model, s.wakeword.threshold)
-        with console.status("Loading language model, Whisper and voice..."):
-            await asyncio.gather(conv.prime(), stt.warmup(), speaker.warmup())
+        await ready("voice", speaker.warmup())
+        if use_briefing:
+            tokens = brief.stream(conv, await fetching)
+            speaking = asyncio.create_task(speak_briefing(s, speaker, tokens, started_at, timings))
+            _, _, wake = await loading
+        else:
+            with console.status("Loading language model, Whisper and voice..."):
+                _, _, wake = await loading
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]Startup failed: {exc}[/]")
+        for task in (fetching, speaking, loading):
+            if task:
+                task.cancel()
+        if speaking:
+            speaker.interrupt()
+        console.print(f"\n[red]Startup failed: {exc}[/]")
         console.print("Run [bold]uv run python -m backend doctor[/] to diagnose.")
         await llm.aclose()
         store.close()
@@ -328,15 +427,10 @@ async def run_voice(s: Settings, resume: bool = False, wake_word: bool | None = 
     loop = VoiceLoop(
         s, conv, stt, speaker, SileroVAD(), UtteranceSegmenter(s.vad), wake=wake, chime=chime
     )
+    if speaking:
+        loop.brief(speaking)
     mic = Microphone(s.audio.input_device)
     mic.start()
-    mode = "barge-in on" if s.audio.barge_in else "half duplex"
-    console.print(f"[bold cyan]{s.assistant_name}[/] online · {s.llm.model} · {mode}")
-    console.print(f"[dim]Tools: {', '.join(tools.names) or 'none'}[/]")
-    if wake:
-        console.print(f'[dim]Say "Hey {s.assistant_name}" to wake me up. Ctrl+C to quit.[/]')
-    else:
-        console.print("[dim]Always listening (wake word off). Speak naturally. Ctrl+C to quit.[/]")
 
     try:
         async for frame in mic.frames():
