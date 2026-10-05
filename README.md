@@ -7,7 +7,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-3_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-5_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
@@ -47,7 +47,7 @@ The language model, speech recognition and voice all run locally: no API keys, n
     </td>
     <td valign="top">
       <h3>🛰️ Futuristic HUD</h3>
-      An original holographic interface: spinning rings that react to the voice, live panels and per-state animations.
+      <i>Coming in phase 6.</i> An original holographic interface: spinning rings that react to the voice, live panels and per-state animations.
     </td>
   </tr>
 </table>
@@ -63,7 +63,7 @@ flowchart LR
     LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers</sub>"]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
-    LLM -. WebSocket .-> HUD[["🛰️ HUD"]]
+    LLM -. WebSocket .-> HUD[["🛰️ HUD<br/><sub>phase 6</sub>"]]
 
     classDef core fill:#0a1420,stroke:#00e5ff,color:#eafcff,stroke-width:2px
     classDef io fill:#02050a,stroke:#ffb340,color:#ffd59a
@@ -90,7 +90,7 @@ The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech re
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news (`--no-briefing` skips it, `--no-wake` listens all the time) |
+| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news (`--no-briefing` skips it, `--no-wake` listens all the time, `-r` resumes the last conversation) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
 | `uv run python -m backend doctor` | Health check: Ollama, models, voice, wake word, microphone, owner, location |
 | `uv run python -m backend briefing` | Print the activation briefing with its timings (`-s` reads it aloud) |
@@ -155,7 +155,7 @@ Jarvis calls tools on its own when a question needs live data or an action:
 | System | "How much battery is left?" · "Set the volume to 30" · "Open Safari" | macOS (`pmset`, `osascript`, `open`) |
 | Timers | "Remind me in 10 minutes to take the cake out" · "Make it 15" · "Cancel the timer" | Local; announced out loud when they end |
 
-In voice mode, saying goodbye, "that's all" or "you can rest" sends Jarvis back to sleep. Unmuting brings back the volume you had before. Turn tools off with `tools.enabled` in `config.yaml` (for example `JARVIS_TOOLS__ENABLED='["weather", "timers"]'`). Timers live in memory and are cleared when Jarvis quits.
+When a tool takes a moment (a slow news feed, for example), Jarvis says "One moment" so you are not left in silence. In voice mode, saying goodbye, "that's all" or "you can rest" sends Jarvis back to sleep. Unmuting brings back the volume you had before. Turn tools off with `tools.enabled` in `config.yaml` (for example `JARVIS_TOOLS__ENABLED='["weather", "timers"]'`). Timers live in memory and are cleared when Jarvis quits.
 
 </details>
 
@@ -211,10 +211,10 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 ![Silero VAD](https://img.shields.io/badge/Silero_VAD-0a1420?style=flat-square)
 ![Piper](https://img.shields.io/badge/Piper_TTS-0a1420?style=flat-square)
 ![Open-Meteo](https://img.shields.io/badge/Open--Meteo-0a1420?style=flat-square)
-![FastAPI](https://img.shields.io/badge/FastAPI-0a1420?style=flat-square&logo=fastapi&logoColor=00e5ff)
-![TypeScript](https://img.shields.io/badge/TypeScript-0a1420?style=flat-square&logo=typescript&logoColor=00e5ff)
 ![SQLite](https://img.shields.io/badge/SQLite-0a1420?style=flat-square&logo=sqlite&logoColor=00e5ff)
 ![uv](https://img.shields.io/badge/uv-0a1420?style=flat-square&logo=uv&logoColor=00e5ff)
+
+<sub>Coming with the HUD (phase 6): FastAPI and TypeScript.</sub>
 
 </div>
 
