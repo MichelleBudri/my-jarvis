@@ -178,6 +178,16 @@ def check_location(s: Settings) -> Check:
     return Check("Location", True, detail, required=False)
 
 
+def check_hud(s: Settings) -> Check:
+    from backend.hud.server import DIST_DIR
+
+    if not s.hud.enabled:
+        return Check("HUD", True, "disabled", required=False)
+    if not (DIST_DIR / "index.html").exists():
+        return Check("HUD", False, "not built: run ./scripts/setup.sh", required=False)
+    return Check("HUD", True, f"http://{s.server.host}:{s.server.port}", required=False)
+
+
 def run() -> int:
     s = get_settings()
     checks = [
@@ -190,6 +200,7 @@ def run() -> int:
         check_voice(s),
         *check_speech_models(s),
         *check_audio(s),
+        check_hud(s),
     ]
 
     table = Table(title=f"{s.assistant_name} · doctor", show_lines=False)

@@ -85,5 +85,14 @@ if [[ ! -f "$WAKE_PATH" ]]; then
 fi
 ok "wake word $(basename "$WAKE_PATH" .onnx)"
 
+if ! command -v npm >/dev/null; then
+  info "Installing Node.js (to build the HUD)..."
+  brew install node
+fi
+info "Building the HUD..."
+npm --prefix frontend ci --no-audit --no-fund --loglevel=error
+npm --prefix frontend run build --silent >/dev/null
+ok "HUD built (frontend/dist)"
+
 echo
 uv run python -m backend doctor

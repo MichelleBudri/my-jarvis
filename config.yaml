@@ -78,5 +78,9 @@ briefing:
   fetch_timeout_s: 5        # a source slower than this is left out
 
 server:
-  host: 127.0.0.1
+  host: 127.0.0.1           # the HUD: http://127.0.0.1:8765
   port: 8765
+
+hud:
+  enabled: true             # holographic interface in the browser; `voice --no-hud` skips it
+  open_browser: true        # open it on start, unless a HUD page is already open

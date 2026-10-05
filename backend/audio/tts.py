@@ -13,6 +13,7 @@ from typing import Protocol
 import numpy as np
 
 OnStart = Callable[[], None]
+OnLevel = Callable[[float], None]
 
 
 class Speaker(Protocol):
@@ -42,6 +43,7 @@ class PiperSpeaker:
         self._synth_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
         self._stop = threading.Event()
         self._speaking = False
+        self.on_level: OnLevel | None = None  # loudness of each block played, for the HUD
 
     @property
     def speaking(self) -> bool:
@@ -61,8 +63,12 @@ class PiperSpeaker:
         chunks = [c.audio_int16_array for c in self._voice.synthesize(text, syn_config=cfg)]
         return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
 
-    def _play(self, audio_q: queue.Queue, on_start: OnStart | None) -> bool:
+    def _play(
+        self, audio_q: queue.Queue, on_start: OnStart | None, on_level: OnLevel | None
+    ) -> bool:
         import sounddevice as sd
+
+        from backend.audio.level import level
 
         rate = self._voice.config.sample_rate
         block = rate // 20  # 50 ms: small enough for instant interruption
@@ -76,7 +82,11 @@ class PiperSpeaker:
                     if self._stop.is_set():
                         out.abort()
                         return False
+                    if on_level:
+                        on_level(level(audio[i : i + block]))
                     out.write(audio[i : i + block])
+        if on_level:
+            on_level(0.0)
         return True
 
     async def warmup(self) -> None:
@@ -89,8 +99,11 @@ class PiperSpeaker:
         self._speaking = True
         audio_q: queue.Queue = queue.Queue()
         notify = (lambda: loop.call_soon_threadsafe(on_start)) if on_start else None
+        report = None
+        if (on_level := self.on_level) is not None:
+            report = lambda v: loop.call_soon_threadsafe(on_level, v)  # noqa: E731
         await loop.run_in_executor(self._synth_pool, self._load)
-        player = loop.run_in_executor(None, self._play, audio_q, notify)
+        player = loop.run_in_executor(None, self._play, audio_q, notify, report)
         try:
             # Synthesize sentence N+1 while sentence N is playing.
             async for sentence in sentences:

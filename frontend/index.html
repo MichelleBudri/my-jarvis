@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Jarvis HUD</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%2300e5ff' stroke-width='2.5' stroke-dasharray='14 4'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%237af4ff'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="hud" data-state="offline">
+      <div class="backdrop" aria-hidden="true"></div>
+
+      <header class="top">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">◈</span>
+          <b id="name">JARVIS</b>
+          <span class="dim" id="model"></span>
+        </div>
+        <div class="status" role="status" aria-live="polite">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="state-label"></span>
+        </div>
+        <div class="clock">
+          <span id="time">--:--</span>
+          <span id="date" class="dim"></span>
+        </div>
+      </header>
+
+      <aside class="col left">
+        <section class="panel" id="weather">
+          <h2><span data-label="weather"></span><span class="sub" id="w-place"></span></h2>
+          <div class="w-now">
+            <div class="temp"><span id="w-temp">--</span><sup>°C</sup></div>
+            <div>
+              <div id="w-cond" class="bright"></div>
+              <div id="w-feels" class="dim"></div>
+            </div>
+          </div>
+          <dl class="kv" id="w-details"></dl>
+          <ul class="w-days" id="w-days"></ul>
+        </section>
+        <section class="panel grow" id="news">
+          <h2><span data-label="news"></span></h2>
+          <ul class="news" id="news-list"></ul>
+        </section>
+      </aside>
+
+      <main class="stage">
+        <canvas id="core" aria-label="Jarvis core"></canvas>
+        <div class="caption">
+          <div id="caption-state" class="caption-state"></div>
+          <div id="caption-hint" class="caption-hint"></div>
+          <div id="tool" class="tool" aria-live="polite"></div>
+        </div>
+      </main>
+
+      <section class="transcript" id="transcript" aria-live="polite"></section>
+
+      <aside class="col right">
+        <section class="panel" id="system">
+          <h2><span data-label="system"></span></h2>
+          <div id="meters" class="meters"></div>
+        </section>
+        <section class="panel" id="timers">
+          <h2><span data-label="timers"></span></h2>
+          <ul id="timer-list" class="timers"></ul>
+        </section>
+        <section class="panel" id="latency">
+          <h2><span data-label="latency"></span><span class="sub" id="tps"></span></h2>
+          <div class="readouts" id="readouts"></div>
+          <div class="spark" id="spark" aria-hidden="true"></div>
+        </section>
+      </aside>
+
+      <footer class="bottom">
+        <span id="footer"></span>
+        <span id="owner" class="dim"></span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

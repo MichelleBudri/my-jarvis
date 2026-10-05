@@ -38,8 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-wake", action="store_true", help="always listen, without the wake word"
     )
     voice.add_argument("--no-briefing", action="store_true", help="skip the weather and news")
+    voice.add_argument("--no-hud", action="store_true", help="no holographic interface")
     briefing = sub.add_parser("briefing", help="print the activation briefing, with timings")
     briefing.add_argument("-s", "--speak", action="store_true", help="read it aloud too")
+    demo = sub.add_parser("hud-demo", help="show the HUD with a scripted conversation (no mic)")
+    demo.add_argument("--sample", action="store_true", help="fixed panels, no network")
     sub.add_parser("wake-test", help="show live wake word scores to tune the threshold")
     sub.add_parser("prompt", help="print the current system prompt")
     bench = sub.add_parser("bench", help="compare LLM latency across models")
@@ -71,12 +74,17 @@ def main(argv: list[str] | None = None) -> int:
                 wake_word=wake_word,
                 briefing=briefing,
                 started_at=STARTED_AT,
+                hud=False if args.no_hud else None,
             )
         )
     if args.command == "briefing":
         from backend.chat import run_briefing
 
         return _run(run_briefing(settings, speak=args.speak))
+    if args.command == "hud-demo":
+        from backend.hud.demo import run_demo
+
+        return _run(run_demo(settings, sample=args.sample))
     if args.command == "wake-test":
         from backend.wake_test import run_wake_test
 

@@ -7,13 +7,13 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-5_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-6_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
 The language model, speech recognition and voice all run locally: no API keys, no tokens, no cloud.
 
-[Features](#-features) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Personalization](#-personalization) · [Roadmap](#-roadmap)
+[Features](#-features) · [HUD](#-hud) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Personalization](#-personalization) · [Roadmap](#-roadmap)
 
 </div>
 
@@ -47,10 +47,27 @@ The language model, speech recognition and voice all run locally: no API keys, n
     </td>
     <td valign="top">
       <h3>🛰️ Futuristic HUD</h3>
-      <i>Coming in phase 6.</i> An original holographic interface: spinning rings that react to the voice, live panels and per-state animations.
+      An original holographic interface in your browser: rings that react to your voice and Jarvis's, a live transcript and panels for weather, news, system and timers.
     </td>
   </tr>
 </table>
+
+## ◈ HUD
+
+<div align="center">
+<img src="docs/assets/hud.png" width="100%" alt="The Jarvis HUD: a glowing core of rings in the centre, weather and AI news on the left, system, timers and latency on the right, the conversation below">
+</div>
+
+<br>
+
+When `voice` starts, the HUD opens in your browser at <http://127.0.0.1:8765>. It is served by Jarvis itself, so there is nothing else to run.
+
+- **The core** changes with the state: dim and slow while it sleeps, cyan while it listens, amber and spinning fast while it thinks, bright while it speaks. The ring of bars follows the loudness of your voice, then of Jarvis's.
+- **The transcript** shows what you said and the reply as it is generated, with the tool being used ("checking the weather").
+- **The panels** show the weather, the latest AI headlines, battery, CPU and memory, timers counting down, and how long each reply took (speech recognition, first word from the model, first sound).
+- **Tap the core** (or press <kbd>Space</kbd>) to wake Jarvis without the wake word, or to send it back to sleep mid-sentence. <kbd>F</kbd> toggles full screen.
+
+To see it without the microphone or the models, run `uv run python -m backend hud-demo`: a scripted conversation drives the interface (`--sample` uses fixed panel data and works offline).
 
 ## ◈ Architecture
 
@@ -63,7 +80,7 @@ flowchart LR
     LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers</sub>"]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
-    LLM -. WebSocket .-> HUD[["🛰️ HUD<br/><sub>phase 6</sub>"]]
+    LLM -. WebSocket .-> HUD[["🛰️ HUD<br/><sub>browser</sub>"]]
 
     classDef core fill:#0a1420,stroke:#00e5ff,color:#eafcff,stroke-width:2px
     classDef io fill:#02050a,stroke:#ffb340,color:#ffd59a
@@ -84,14 +101,15 @@ cp .env.example .env        # your name, city and language
 uv run python -m backend voice  # say "Hey Jarvis", then ask
 ```
 
-The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech recognition model (`whisper-small`, about 0.5 GB), the Piper voice for your language and the "Hey Jarvis" wake word model (about 4 MB).
+The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech recognition model (`whisper-small`, about 0.5 GB), the Piper voice for your language and the "Hey Jarvis" wake word model (about 4 MB). It also installs Node.js if needed and builds the HUD.
 
 ### Commands
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news (`--no-briefing` skips it, `--no-wake` listens all the time, `-r` resumes the last conversation) |
+| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news and opens the HUD (`--no-briefing` and `--no-hud` skip them, `--no-wake` listens all the time, `-r` resumes the last conversation) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
+| `uv run python -m backend hud-demo` | The HUD with a scripted conversation: no microphone or models needed (`--sample` for fixed, offline panel data) |
 | `uv run python -m backend doctor` | Health check: Ollama, models, voice, wake word, microphone, owner, location |
 | `uv run python -m backend briefing` | Print the activation briefing with its timings (`-s` reads it aloud) |
 | `uv run python -m backend wake-test` | Live wake word scores, to tune the detection threshold |
@@ -100,6 +118,7 @@ The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech re
 | `uv run python -m backend prompt` | Print the current system prompt |
 | `uv run python -m backend config` | Print the effective configuration |
 | `uv run pytest` · `uv run ruff check .` | Tests and lint |
+| `npm --prefix frontend run dev` | Work on the HUD with hot reload at <http://localhost:5173> (with `voice` or `hud-demo` running) |
 
 ## ◈ Personalization
 
@@ -160,6 +179,18 @@ When a tool takes a moment (a slow news feed, for example), Jarvis says "One mom
 </details>
 
 <details>
+<summary><b>HUD</b></summary>
+<br>
+
+The HUD settings live in `config.yaml`: `hud.enabled`, `hud.open_browser` and the address in `server.host` / `server.port` (default `127.0.0.1:8765`). If a HUD page is already open, Jarvis reconnects it instead of opening a new tab. If the port is busy, Jarvis runs without the HUD and says so.
+
+Only pages served from this address (or the Vite dev server) may connect: the WebSocket checks the page's origin, so other websites open in your browser cannot read the conversation. To open the HUD from another device on your network, set `JARVIS_SERVER__HOST` to this Mac's address, and keep in mind that anyone on that network can then open it too.
+
+After changing the frontend, rebuild with `npm --prefix frontend run build`.
+
+</details>
+
+<details>
 <summary><b>Voice and microphone</b></summary>
 <br>
 
@@ -197,8 +228,8 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 | 3 | Wake word: "Hey Jarvis", state machine | ✅ Done |
 | 4 | Tools: weather, AI news, system, timers | ✅ Done |
 | 5 | Activation briefing | ✅ Done |
-| 6 | Holographic HUD | 🔜 Next |
-| 7 | Polish: long-term memory, launch at login, echo cancellation | ⏳ Planned |
+| 6 | Holographic HUD | ✅ Done |
+| 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | 🔜 Next |
 
 
 ## ◈ Stack
@@ -211,10 +242,11 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 ![Silero VAD](https://img.shields.io/badge/Silero_VAD-0a1420?style=flat-square)
 ![Piper](https://img.shields.io/badge/Piper_TTS-0a1420?style=flat-square)
 ![Open-Meteo](https://img.shields.io/badge/Open--Meteo-0a1420?style=flat-square)
+![FastAPI](https://img.shields.io/badge/FastAPI-0a1420?style=flat-square&logo=fastapi&logoColor=00e5ff)
+![TypeScript](https://img.shields.io/badge/TypeScript-0a1420?style=flat-square&logo=typescript&logoColor=00e5ff)
+![Vite](https://img.shields.io/badge/Vite-0a1420?style=flat-square&logo=vite&logoColor=00e5ff)
 ![SQLite](https://img.shields.io/badge/SQLite-0a1420?style=flat-square&logo=sqlite&logoColor=00e5ff)
 ![uv](https://img.shields.io/badge/uv-0a1420?style=flat-square&logo=uv&logoColor=00e5ff)
-
-<sub>Coming with the HUD (phase 6): FastAPI and TypeScript.</sub>
 
 </div>
 

@@ -160,6 +160,11 @@ class ServerConfig(BaseModel):
     port: int = 8765
 
 
+class HudConfig(BaseModel):
+    enabled: bool = True  # `voice --no-hud` turns it off for one run
+    open_browser: bool = True  # open the HUD page on start (not if one is already open)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="JARVIS_",
@@ -189,6 +194,7 @@ class Settings(BaseSettings):
     news: NewsConfig = Field(default_factory=NewsConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    hud: HudConfig = Field(default_factory=HudConfig)
 
     @property
     def data_path(self) -> Path:

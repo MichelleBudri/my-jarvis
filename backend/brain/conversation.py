@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,6 +57,7 @@ class Conversation:
         self.tools = tools or ToolRegistry()
         self.id = conversation_id or store.new_conversation()
         self.last_stats = TurnStats()
+        self.on_tool: Callable[[str], None] | None = None  # the HUD shows tools as they run
         self.system_prompt = build_system_prompt(
             settings, self.tools.capabilities(settings.locale.lang)
         )
@@ -133,6 +134,9 @@ class Conversation:
     async def _run_tools(self, calls: list[dict[str, Any]], stats: TurnStats) -> list[dict]:
         start = time.perf_counter()
         fns = [c.get("function") or {} for c in calls]
+        if self.on_tool:
+            for fn in fns:
+                self.on_tool(fn.get("name", "?"))
         results = await asyncio.gather(
             *(self.tools.call(fn.get("name", ""), fn.get("arguments")) for fn in fns)
         )

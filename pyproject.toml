@@ -17,6 +17,9 @@ dependencies = [
     "pydantic-settings[yaml]>=2.3",
     "rich>=13.7",
     "openwakeword>=0.6",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "websockets>=13",
 ]
 
 [dependency-groups]

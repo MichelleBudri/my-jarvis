@@ -36,9 +36,11 @@ class TimerManager:
         s: Settings,
         on_fire: Callable[[Timer], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         self.s = s
         self.on_fire = on_fire
+        self.on_change = on_change  # the HUD redraws its timer panel
         self.clock = clock
         self.timers: dict[int, Timer] = {}
         self._ids = itertools.count(1)
@@ -62,10 +64,28 @@ class TimerManager:
             "ends_at": f"{ends:%H:%M}",
         }
 
+    def snapshot(self) -> list[dict]:
+        """Active timers with their end as a Unix time in ms, for a live countdown."""
+        now, wall = self.clock(), time.time()
+        return [
+            {
+                "id": t.id,
+                "label": t.label,
+                "seconds": t.seconds,
+                "ends_at_ms": round((wall + t.remaining(now)) * 1000),
+            }
+            for t in sorted(self.timers.values(), key=lambda t: t.ends_at)
+        ]
+
+    def _changed(self) -> None:
+        if self.on_change:
+            self.on_change()
+
     async def _run(self, timer: Timer) -> None:
         await asyncio.sleep(timer.seconds)
         self.timers.pop(timer.id, None)
         log.debug("Timer %s finished", timer.id)
+        self._changed()
         if self.on_fire:
             self.on_fire(timer)
 
@@ -92,6 +112,7 @@ class TimerManager:
         timer = Timer(next(self._ids), total, self.clock() + total, label)
         timer.task = asyncio.create_task(self._run(timer))
         self.timers[timer.id] = timer
+        self._changed()
         out = {"ok": True, **self._describe(timer)}
         if replaced:
             out["replaced_previous_timer"] = True
@@ -140,6 +161,7 @@ class TimerManager:
         targets = self._find(id, label)
         for t in targets:
             self._cancel(t)
+        self._changed()
         return {"ok": True, "cancelled": [{"id": t.id, "label": t.label} for t in targets]}
 
     def _cancel(self, t: Timer) -> None:
@@ -152,6 +174,7 @@ class TimerManager:
             if t.task:
                 t.task.cancel()
         self.timers.clear()
+        self._changed()
 
 
 def timer_tools(manager: TimerManager) -> list[Tool]:
