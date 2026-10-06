@@ -231,8 +231,14 @@ async def run_demo(s: Settings, sample: bool = False) -> int:
     else:
         news = NewsService(s) if s.news.feeds else None
         tasks = start_feeds(s, bus, WeatherService(s), news)
-    if s.hud.open_browser:
-        tasks.append(asyncio.create_task(open_hud(bus, server.url)))
+    window = None
+    if s.hud.window:
+        from backend.app_bundle import launcher
+        from backend.hud.window import HudWindow
+
+        window = HudWindow(server.url, s.assistant_name, *launcher(s))
+    if s.hud.open_on_start:
+        tasks.append(asyncio.create_task(open_hud(bus, server.url, window)))
     try:
         await Demo(s, bus).run()
     except asyncio.CancelledError:
@@ -240,5 +246,7 @@ async def run_demo(s: Settings, sample: bool = False) -> int:
     finally:
         for task in tasks:
             task.cancel()
+        if window:
+            await window.close()
         await server.stop()
     return 0

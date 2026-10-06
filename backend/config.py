@@ -10,7 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -112,8 +112,10 @@ class TTSConfig(BaseModel):
 class AudioConfig(BaseModel):
     input_device: str | int | None = None  # None = system default
     output_device: str | int | None = None
-    # Interrupt Jarvis by speaking. Needs headphones, or it will hear itself.
+    # Interrupt Jarvis by speaking. With echo cancellation (Piper voice), no headphones needed.
     barge_in: bool = False
+    # With barge_in: remove Jarvis's own voice from the microphone (WebRTC AEC3).
+    echo_cancellation: bool = True
 
 
 class VADConfig(BaseModel):
@@ -136,8 +138,10 @@ class WakeWordConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    # weather | news | system | timers. Remove one to hide it from the model.
-    enabled: list[str] = Field(default_factory=lambda: ["weather", "news", "system", "timers"])
+    # weather | news | system | timers | clock | memory. Remove one to hide it from the model.
+    enabled: list[str] = Field(
+        default_factory=lambda: ["weather", "news", "system", "timers", "clock", "memory"]
+    )
     max_rounds: int = 3  # tool calls the model may chain before it must answer
     # Say "one moment" when the model is silent this long (it is probably calling a tool).
     one_moment_after_s: float = 1.5
@@ -162,7 +166,17 @@ class ServerConfig(BaseModel):
 
 class HudConfig(BaseModel):
     enabled: bool = True  # `voice --no-hud` turns it off for one run
-    open_browser: bool = True  # open the HUD page on start (not if one is already open)
+    window: bool = True  # a native window; False = a browser tab
+    open_on_start: bool = True  # unless a HUD page left open reconnects first
+    # The name of `open_on_start` until phase 7, when the HUD got its own window. Declared
+    # so pydantic-settings keeps JARVIS_HUD__OPEN_BROWSER (it drops unknown nested keys).
+    open_browser: bool | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _renamed(self) -> HudConfig:
+        if self.open_browser is not None:
+            self.open_on_start = self.open_browser
+        return self
 
 
 class Settings(BaseSettings):

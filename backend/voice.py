@@ -395,15 +395,40 @@ class VoiceLoop:
         )
 
 
-async def run_voice(
+OLLAMA_WAIT_AT_LOGIN_S = 120
+MIC_DENIED = (
+    "The microphone delivers only silence: macOS has probably denied access to the app "
+    "running Jarvis. Allow it in System Settings → Privacy & Security → Microphone."
+)
+
+
+async def run_voice(s: Settings, at_login: bool = False, **kwargs) -> int:
+    """`voice`, one instance at a time. At login, an instance already open is not an error."""
+    from backend.instance import InstanceLock
+
+    lock = InstanceLock(s.data_path / "jarvis.lock")
+    if not lock.acquire():
+        pid = lock.owner()
+        running = f" (pid {pid})" if pid else ""
+        console.print(f"[yellow]{s.assistant_name} is already running{running}.[/]")
+        console.print("[dim]Launched at login? `uv run python -m backend autostart stop`[/]")
+        return 0 if at_login else 1
+    try:
+        return await _run_voice(s, at_login=at_login, **kwargs)
+    finally:
+        lock.release()
+
+
+async def _run_voice(
     s: Settings,
     resume: bool = False,
     wake_word: bool | None = None,
     briefing: bool | None = None,
     started_at: float | None = None,
     hud: bool | None = None,
+    at_login: bool = False,
 ) -> int:
-    from backend.audio.capture import Microphone
+    from backend.audio.capture import Microphone, SilenceWatch
     from backend.audio.stt import WhisperSTT
     from backend.audio.vad import SileroVAD, UtteranceSegmenter
     from backend.audio.wakeword import load_wake_model
@@ -423,13 +448,31 @@ async def run_voice(
     server = HudServer(s, bus) if use_hud else None
     if server and not await server.start():
         server = None
-    if server and s.hud.open_browser:
-        background = [asyncio.create_task(open_hud(bus, server.url))]
+    window = None
+    if server and s.hud.window:
+        from backend.app_bundle import launcher
+        from backend.hud.window import HudWindow
+
+        window = HudWindow(server.url, s.assistant_name, *launcher(s))
+    if server and s.hud.open_on_start:
+        background = [asyncio.create_task(open_hud(bus, server.url, window))]
     else:
         background = []
 
-    await resolve_location(s)
     llm = OllamaClient(s.llm)
+    if at_login and not await llm.wait_ready(0):
+        console.print("[dim]Waiting for Ollama to start...[/]")
+        if not await llm.wait_ready(OLLAMA_WAIT_AT_LOGIN_S):
+            console.print(f"[red]Ollama did not answer at {s.llm.host}[/]")
+            for task in background:
+                task.cancel()
+            if window:
+                await window.close()
+            if server:
+                await server.stop()
+            await llm.aclose()
+            return 1
+    await resolve_location(s)
     store = MemoryStore(s.db_path)
     # The callbacks reach `loop`, created below, only after startup.
     timers = TimerManager(
@@ -441,7 +484,7 @@ async def run_voice(
     # Shared with the briefing, so "more news?" right after it hits the cache.
     weather = WeatherService(s) if "weather" in s.tools.enabled else None
     news = NewsService(s) if "news" in s.tools.enabled else None
-    tools = build_registry(s, timers, extra, weather, news)
+    tools = build_registry(s, timers, extra, weather, news, store)
     conv_id = store.last_conversation() if resume else None
     conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
     conv.on_tool = lambda name: bus.publish({"type": "tool", "name": name})
@@ -449,6 +492,16 @@ async def run_voice(
     speaker = make_speaker(s)
     if isinstance(speaker, PiperSpeaker):
         speaker.on_level = lambda v: bus.publish({"type": "level", "out": v})
+    aec = None
+    if s.audio.barge_in and s.audio.echo_cancellation:
+        if isinstance(speaker, PiperSpeaker):
+            from backend.audio.aec import load_echo_canceller
+
+            aec = load_echo_canceller()
+            if aec:
+                speaker.on_audio = aec.play
+        else:
+            console.print("[yellow]Echo cancellation needs the Piper voice: use headphones[/]")
     bus.publish(
         {
             "type": "hello",
@@ -462,7 +515,9 @@ async def run_voice(
         }
     )
 
-    mode = "barge-in on" if s.audio.barge_in else "half duplex"
+    mode = "half duplex"
+    if s.audio.barge_in:
+        mode = "barge-in on · echo cancellation" if aec else "barge-in on (headphones)"
     console.print(f"[bold cyan]{s.assistant_name}[/] · {s.llm.model} · {mode}")
     console.print(f"[dim]Tools: {', '.join(tools.names) or 'none'}[/]")
     if use_wake:
@@ -517,15 +572,20 @@ async def run_voice(
             speaker.interrupt()
         console.print(f"\n[red]Startup failed: {exc}[/]")
         console.print("Run [bold]uv run python -m backend doctor[/] to diagnose.")
+        if window:
+            await window.close()
         if server:
             await server.stop()
         await llm.aclose()
         store.close()
+        if aec:
+            aec.close()
         return 1
 
     chime = None
     if s.wakeword.chime:
-        chime = functools.partial(earcon.play, device=s.audio.output_device)
+        on_audio = aec.play if aec else None
+        chime = functools.partial(earcon.play, device=s.audio.output_device, on_audio=on_audio)
     loop = VoiceLoop(
         s,
         conv,
@@ -544,10 +604,14 @@ async def run_voice(
         background += start_feeds(s, bus, weather, news)
     mic = Microphone(s.audio.input_device)
     mic.start()
+    silence = SilenceWatch()
 
     try:
         async for frame in mic.frames():
-            loop.on_frame(frame)
+            if silence(frame):
+                console.print(f"[red]{MIC_DENIED}[/]")
+            for cleaned in aec.process(frame) if aec else (frame,):
+                loop.on_frame(cleaned)
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
@@ -558,10 +622,14 @@ async def run_voice(
             loop.task.cancel()
         for task in background:
             task.cancel()
+        if window:
+            await window.close()
         if server:
             await server.stop()
         await llm.aclose()
         store.close()
+        if aec:
+            aec.close()
 
     addr = f", {s.owner_address}" if s.owner_address else ""
     console.print(f"\n[cyan]{s.assistant_name}:[/] {s.locale.farewell.format(addr=addr)}")

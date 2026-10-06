@@ -52,7 +52,8 @@ async def run_chat(s: Settings, resume: bool = False, speak: bool = False) -> in
             asyncio.create_task(speaker.speak(_once(text)))
 
     timers = TimerManager(s, on_fire=on_timer)
-    conv = Conversation(s, llm, store, conv_id, build_registry(s, timers), warm_after_turn=True)
+    tools = build_registry(s, timers, store=store)
+    conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
 
     try:
         with console.status(f"Loading {s.llm.model}..."):
@@ -148,7 +149,8 @@ async def run_briefing(s: Settings, speak: bool = False) -> int:
     store = MemoryStore(s.db_path)
     weather = WeatherService(s) if "weather" in s.tools.enabled else None
     news = NewsService(s) if "news" in s.tools.enabled else None
-    conv = Conversation(s, llm, store, tools=build_registry(s, weather=weather, news=news))
+    tools = build_registry(s, weather=weather, news=news, store=store)
+    conv = Conversation(s, llm, store, tools=tools)
     speaker = None
     try:
         with console.status("Fetching weather and news, loading the model..."):

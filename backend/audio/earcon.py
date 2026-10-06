@@ -25,8 +25,12 @@ def duration_s(audio: np.ndarray) -> float:
     return len(audio) / RATE
 
 
-def play(audio: np.ndarray, device: str | int | None = None) -> None:
-    """Non-blocking playback."""
+def play(audio: np.ndarray, device: str | int | None = None, on_audio=None) -> None:
+    """Non-blocking playback. `on_audio` gets it at 16 kHz (the echo canceller's reference)."""
     import sounddevice as sd
 
+    if on_audio is not None:
+        from backend.audio.aec import resample
+
+        on_audio(resample(audio, RATE))
     sd.play(audio, RATE, device=device)

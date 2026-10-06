@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -15,6 +17,7 @@ from backend.brain.prompts import build_context_note, build_greeting, build_syst
 from backend.config import Settings
 from backend.memory.store import MemoryStore
 from backend.tools.registry import ToolRegistry
+from backend.tools.registry import user_text as user_text_var
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +29,18 @@ HISTORY_RESULT_MAX_CHARS = 300
 STALE_RESULT = json.dumps(
     {"omitted": "result from an earlier turn; call the tool again for current data"}
 )
+
+# A reply that opens with this much of an earlier reply, word for word, is a copy. After
+# speech it could not make sense of (a conversation in the background), qwen3 repeated
+# the weather report it had given earlier; once in history, it repeated it on every turn.
+COPY_MIN_CHARS = 40
+_ASKS_REPEAT = re.compile(
+    r"\b(?:repet|de novo|outra vez|novamente|repeat|again|say that)", re.IGNORECASE
+)
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.lower().split())
 
 
 @dataclass
@@ -58,11 +73,16 @@ class Conversation:
         self.id = conversation_id or store.new_conversation()
         self.last_stats = TurnStats()
         self.on_tool: Callable[[str], None] | None = None  # the HUD shows tools as they run
-        self.system_prompt = build_system_prompt(
-            settings, self.tools.capabilities(settings.locale.lang)
-        )
+        self._capabilities = self.tools.capabilities(settings.locale.lang)
         # Same list every turn: Ollama renders tools into the cached prompt prefix.
         self._schemas = self.tools.schemas() or None
+
+    @property
+    def system_prompt(self) -> str:
+        """Rebuilt each turn, but the same text until a fact is remembered or forgotten,
+        so Ollama keeps reusing its cached prefix."""
+        facts = self.store.facts() if "remember" in self.tools else None
+        return build_system_prompt(self.s, self._capabilities, facts)
 
     @property
     def tool_schemas(self) -> list[dict[str, Any]] | None:
@@ -191,9 +211,21 @@ class Conversation:
         finally:
             task.cancel()
 
+    @staticmethod
+    def _could_be_copy(text: str, earlier: list[str]) -> bool:
+        t = _norm(text)
+        return bool(t) and any(reply.startswith(t) for reply in earlier)
+
     def _could_be_tool_name(self, text: str) -> bool:
         t = text.strip().rstrip(".!").lower()
         return bool(t) and any(name.startswith(t) for name in self.tools.names)
+
+    @staticmethod
+    def _earlier_replies(user_text: str, history: list[dict[str, Any]]) -> list[str]:
+        """What a reply must not copy: the assistant's earlier answers in history."""
+        if _ASKS_REPEAT.search(user_text):
+            return []  # "pode repetir?": copying is the right answer
+        return [_norm(m["content"]) for m in history if m["role"] == "assistant" and m["content"]]
 
     def _as_tool_name(self, text: str) -> str | None:
         t = text.strip().rstrip(".!").lower()
@@ -201,8 +233,10 @@ class Conversation:
 
     async def reply(self, user_text: str) -> AsyncIterator[str]:
         """Stream the reply, running any tools the model asks for, and persist the turn."""
+        user_text_var.set(user_text)  # this task's context: tools see what was asked
         history = self.store.recent(self.id, self.s.llm.context_messages)
         messages: list[dict[str, Any]] = self._messages(user_text, history)
+        earlier = self._earlier_replies(user_text, history)
         stats = TurnStats()
         start = time.perf_counter()
         parts: list[str] = []
@@ -220,45 +254,64 @@ class Conversation:
             for _ in range(self.s.tools.max_rounds + 1):
                 calls: list[dict[str, Any]] = []
                 said = []
-                for attempt in range(2):
+                retried_blank = False
+                for _attempt in range(3):
                     generated = 0
-                    held = ""  # text that may still turn out to be a tool name
+                    held = ""  # text that may still turn out to be a tool name or a copy
+                    copied = False
                     quiet = None
                     if self._schemas and not waited and not parts:
                         quiet = self.s.tools.one_moment_after_s
-                    async for chunk in self._stream(messages, quiet):
-                        if chunk is None:
-                            waited = True
-                            yield one_moment
-                            continue
-                        if chunk.content:
-                            held += chunk.content
-                            if self._could_be_tool_name(held):
+                    stream = self._stream(messages, quiet)
+                    async with contextlib.aclosing(stream):
+                        async for chunk in stream:
+                            if chunk is None:
+                                waited = True
+                                yield one_moment
                                 continue
-                            if stats.first_token_s is None:
-                                stats.first_token_s = time.perf_counter() - start
-                            said.append(held)
-                            yield held
-                            held = ""
-                        calls.extend(chunk.tool_calls)
-                        if chunk.done:
-                            generated = chunk.stats.get("eval_count") or 0
-                            stats.tokens_per_second = chunk.tokens_per_second
-                            stats.prompt_tokens = chunk.stats.get("prompt_eval_count")
-                            if ns := chunk.stats.get("prompt_eval_duration"):
-                                stats.prompt_eval_s = ns / 1e9
+                            if chunk.content:
+                                held += chunk.content
+                                if self._could_be_tool_name(held):
+                                    continue
+                                if not said and earlier and self._could_be_copy(held, earlier):
+                                    if len(_norm(held)) < COPY_MIN_CHARS:
+                                        continue
+                                    copied = True
+                                    break
+                                if stats.first_token_s is None:
+                                    stats.first_token_s = time.perf_counter() - start
+                                said.append(held)
+                                yield held
+                                held = ""
+                            calls.extend(chunk.tool_calls)
+                            if chunk.done:
+                                generated = chunk.stats.get("eval_count") or 0
+                                stats.tokens_per_second = chunk.tokens_per_second
+                                stats.prompt_tokens = chunk.stats.get("prompt_eval_count")
+                                if ns := chunk.stats.get("prompt_eval_duration"):
+                                    stats.prompt_eval_s = ns / 1e9
+                    if copied:
+                        # Nothing was said yet. Without the history there is nothing to
+                        # copy; the question alone gets "could you repeat that?".
+                        log.warning("Model copied an earlier reply; answering without history")
+                        del messages[1 : 1 + len(history)]
+                        history, earlier, calls = [], [], []
+                        continue
                     if name := self._as_tool_name(held):
                         # qwen3 sometimes writes "Go_to_sleep." as text instead of calling it;
                         # spoken aloud, that is the tool name read to the user.
                         log.warning("Model wrote the tool name %r as text; calling it", name)
                         calls.append({"function": {"name": name, "arguments": {}}})
-                    elif held:
+                    elif held:  # a short reply that matched an earlier one: not a copy
+                        if stats.first_token_s is None:
+                            stats.first_token_s = time.perf_counter() - start
                         said.append(held)
                         yield held
                     # Tokens came out but neither text nor a call: Ollama dropped a tool
                     # call it could not parse. Sampling again usually gets it through.
-                    if said or calls or not generated or attempt:
+                    if said or calls or not generated or retried_blank:
                         break
+                    retried_blank = True
                     log.warning("Blank reply after %d tokens; retrying once", generated)
                 parts.extend(said)
                 if not calls:
@@ -276,7 +329,7 @@ class Conversation:
                     # → days=2). Drafting the answer next to earlier replies that open the
                     # same way ("A senhora terá..."), qwen3 copied one instead of the data.
                     del messages[1 : 1 + len(history)]
-                    history = []
+                    history, earlier = [], []
                 round_ = [
                     {"role": "assistant", "content": "".join(said), "tool_calls": calls},
                     *await self._run_tools(calls, stats),

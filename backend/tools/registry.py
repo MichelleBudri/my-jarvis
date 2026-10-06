@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# What the user said this turn, set by Conversation.reply: a tool can check that the user
+# really asked for what the model is doing (see `remember`). None outside a conversation.
+user_text: ContextVar[str | None] = ContextVar("user_text", default=None)
 
 Handler = Callable[..., Awaitable[Any]]
 

@@ -113,14 +113,23 @@ function tickClock(): void {
   });
 }
 
+// In the native window (pywebview) WebKit's Fullscreen API is off: the window does it.
+type PyWebView = { api?: { toggle_fullscreen?: () => Promise<void> } };
+
+function toggleFullscreen(): void {
+  const native = (window as unknown as { pywebview?: PyWebView }).pywebview?.api;
+  if (native?.toggle_fullscreen) void native.toggle_fullscreen();
+  else if (document.fullscreenElement) void document.exitFullscreen();
+  else void document.documentElement.requestFullscreen();
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.code === "Space") {
     e.preventDefault();
     tap();
   } else if (e.key === "f" || e.key === "F") {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void document.documentElement.requestFullscreen();
+    toggleFullscreen();
   }
 });
 

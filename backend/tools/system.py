@@ -40,14 +40,19 @@ def parse_battery(text: str) -> dict | None:
     if not m:
         return None  # desktop Mac
     percent, status, remaining = m.groups()
+    status = status.strip()  # charging | discharging | charged | finishing charge | AC attached
     out: dict = {
         "percent": int(percent),
-        "status": status.strip(),  # charging | discharging | charged | finishing charge
+        "status": status,
+        "charging": status in ("charging", "finishing charge"),
         "on_power_adapter": "AC Power" in text,
     }
     if remaining and remaining != "0:00":
         h, mins = remaining.split(":")
-        out["time_remaining"] = f"{int(h)}h{mins}"
+        # pmset says "remaining" for both; while charging it is the time to a full charge.
+        # Under one name, qwen3 read 36 minutes to full as 36 minutes of battery left.
+        key = "time_until_full" if out["charging"] else "battery_time_left"
+        out[key] = f"{int(h)}h{mins}"
     return out
 
 

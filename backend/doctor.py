@@ -188,6 +188,22 @@ def check_hud(s: Settings) -> Check:
     return Check("HUD", True, f"http://{s.server.host}:{s.server.port}", required=False)
 
 
+def check_autostart() -> Check:
+    from backend import autostart
+
+    st = autostart.status()
+    if not st.installed:
+        return Check("Launch at login", True, "off · `autostart install`", required=False)
+    from backend.app_bundle import executable
+
+    if not executable(get_settings()).exists():
+        return Check("Launch at login", False, "app missing: `autostart install`", required=False)
+    if st.pid:
+        return Check("Launch at login", True, f"on · running (pid {st.pid})", required=False)
+    detail = "on · not running" + (f" (last exit {st.last_exit})" if st.last_exit else "")
+    return Check("Launch at login", True, detail, required=False)
+
+
 def run() -> int:
     s = get_settings()
     checks = [
@@ -201,6 +217,7 @@ def run() -> int:
         *check_speech_models(s),
         *check_audio(s),
         check_hud(s),
+        check_autostart(),
     ]
 
     table = Table(title=f"{s.assistant_name} · doctor", show_lines=False)

@@ -20,6 +20,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "websockets>=13",
+    "pywebview>=6.2",
+    "livekit>=1.0",
+    "scipy>=1.13",
 ]
 
 [dependency-groups]

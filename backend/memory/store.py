@@ -1,4 +1,4 @@
-"""Conversation history stored in SQLite."""
+"""Conversation history and long-term facts, stored in SQLite."""
 
 from __future__ import annotations
 
@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_name       TEXT   -- on a tool message
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+CREATE TABLE IF NOT EXISTS facts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -98,6 +103,34 @@ class MemoryStore:
         while messages and (messages[0]["role"] == "tool" or "tool_calls" in messages[0]):
             messages.pop(0)
         return messages
+
+    # Long-term memory: facts kept across conversations ("remember that...")
+
+    def add_fact(self, content: str) -> tuple[int, bool]:
+        """Store a fact; returns its id and whether it is new (False: already known)."""
+        content = " ".join(content.split())
+        for fact_id, known in self.facts():
+            if known.casefold() == content.casefold():
+                return fact_id, False
+        with self.db:
+            cur = self.db.execute(
+                "INSERT INTO facts (content, created_at) VALUES (?, ?)", (content, _now())
+            )
+        return int(cur.lastrowid), True
+
+    def facts(self) -> list[tuple[int, str]]:
+        rows = self.db.execute("SELECT id, content FROM facts ORDER BY id").fetchall()
+        return [(r["id"], r["content"]) for r in rows]
+
+    def forget_fact(self, fact_id: int) -> bool:
+        with self.db:
+            cur = self.db.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+        return cur.rowcount > 0
+
+    def forget_all_facts(self) -> int:
+        with self.db:
+            cur = self.db.execute("DELETE FROM facts")
+        return cur.rowcount
 
     def count(self, conversation_id: int) -> int:
         row = self.db.execute(

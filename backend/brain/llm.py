@@ -54,6 +54,23 @@ class OllamaClient:
             payload["tools"] = tools
         return payload
 
+    async def wait_ready(self, timeout_s: float, interval_s: float = 1.0) -> bool:
+        """Wait for the server to answer: at login, Ollama may still be starting."""
+        import asyncio
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                resp = await self._client.get("/api/version")
+                if resp.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                pass
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(interval_s)
+
     async def warmup(self) -> None:
         """Load the model into memory (an empty message list only loads it)."""
         resp = await self._client.post(

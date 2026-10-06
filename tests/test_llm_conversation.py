@@ -87,3 +87,72 @@ def test_prime_sends_only_the_system_prompt(tmp_path):
     payload = captured["payload"]
     assert payload["messages"] == [{"role": "system", "content": conv.system_prompt}]
     assert payload["options"]["num_predict"] == 1 and payload["stream"] is False
+
+
+WEATHER = (
+    "A senhora está com garoa fraca, temperatura de 17 graus, umidade de 94 por cento "
+    "e vento de 12 quilômetros por hora."
+)
+
+
+def scripted_ollama(replies: list[str], payloads: list[dict]):
+    """Answers each request with the next reply, streamed in small chunks."""
+    queue = iter(replies)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        text = next(queue)
+        chunks = [text[i : i + 8] for i in range(0, len(text), 8)]
+        lines = [{"message": {"role": "assistant", "content": c}, "done": False} for c in chunks]
+        lines.append({"message": {"role": "assistant", "content": ""}, "done": True})
+        return httpx.Response(200, text="\n".join(json.dumps(x) for x in lines) + "\n")
+
+    return handler
+
+
+def conversation_with_history(tmp_path, replies, payloads, history):
+    s = Settings()
+    client = httpx.AsyncClient(
+        base_url="http://ollama", transport=httpx.MockTransport(scripted_ollama(replies, payloads))
+    )
+    store = MemoryStore(tmp_path / "t.db")
+    conv = Conversation(s, OllamaClient(s.llm, client=client), store)
+    for role, content in history:
+        store.add(conv.id, role, content)
+    return conv, store
+
+
+def say(conv, text):
+    async def go():
+        return "".join([t async for t in conv.reply(text)])
+
+    return asyncio.run(go())
+
+
+def test_a_copied_reply_is_dropped_and_answered_without_history(tmp_path):
+    payloads: list[dict] = []
+    history = [("user", "Qual é o clima?"), ("assistant", WEATHER)]
+    retry = "Desculpe, senhora, pode repetir?"
+    conv, store = conversation_with_history(tmp_path, [WEATHER, retry], payloads, history)
+    out = say(conv, "Eu amo a própria Alexa.")
+    assert out == retry  # nothing of the copy reached the speaker
+    assert len(payloads) == 2
+    assert [m["role"] for m in payloads[1]["messages"]] == ["system", "user"]  # no history
+    assert store.recent(conv.id, 10)[-1]["content"] == retry
+
+
+def test_repeating_on_request_and_short_replies_are_not_copies(tmp_path):
+    payloads: list[dict] = []
+    history = [
+        ("user", "Qual é o clima?"),
+        ("assistant", WEATHER),
+        ("user", "Valeu"),
+        ("assistant", "Por nada, senhora."),
+    ]
+    conv, _ = conversation_with_history(
+        tmp_path, [WEATHER, "Por nada, senhora."], payloads, history
+    )
+    assert say(conv, "Pode repetir, por favor?") == WEATHER
+    assert say(conv, "Obrigada") == "Por nada, senhora."  # under COPY_MIN_CHARS
+    assert len(payloads) == 2  # no retries
+    assert conv.last_stats.first_token_s is not None

@@ -201,3 +201,47 @@ def test_hud_commands_ignored_without_wake_word():
     h = Harness(wake=False)
     h.loop.bus.command("sleep")
     assert h.state is State.LISTENING
+
+
+class FakeWindow:
+    def __init__(self, opens: bool) -> None:
+        self.opens = opens
+        self.opened = 0
+
+    async def open(self) -> bool:
+        self.opened += 1
+        return self.opens
+
+
+def test_hud_opens_in_the_window_and_falls_back_to_the_browser(monkeypatch):
+    from backend.hud import server
+
+    browser = []
+    monkeypatch.setattr(server, "RECONNECT_S", 0)
+    monkeypatch.setattr(server.webbrowser, "open", browser.append)
+    window = FakeWindow(opens=True)
+    asyncio.run(server.open_hud(HudBus(), "http://hud", window))
+    assert window.opened == 1 and browser == []
+    asyncio.run(server.open_hud(HudBus(), "http://hud", FakeWindow(opens=False)))
+    assert browser == ["http://hud"]
+    bus = HudBus()
+    bus.subscribe()  # a page left open reconnected: open nothing
+    window = FakeWindow(opens=True)
+    asyncio.run(server.open_hud(bus, "http://hud", window))
+    assert window.opened == 0 and browser == ["http://hud"]
+
+
+def test_hud_window_reports_a_window_that_cannot_open(monkeypatch):
+    import sys
+
+    from backend.hud import window
+
+    monkeypatch.setattr(sys, "executable", "/usr/bin/false")  # exits at once
+    win = window.HudWindow("http://hud", "Jarvis")
+    assert asyncio.run(win.open()) is False
+
+
+def test_old_open_browser_setting_still_works(monkeypatch):
+    monkeypatch.setenv("JARVIS_HUD__OPEN_BROWSER", "false")
+    assert Settings().hud.open_on_start is False
+    assert Settings().hud.window is True

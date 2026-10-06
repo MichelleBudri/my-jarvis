@@ -87,7 +87,28 @@ def _abilities_pt(can: str) -> str:
     )
 
 
-def _prompt_pt(s: Settings, loc: Locale, can: str) -> str:
+def _memory_pt(s: Settings, facts: list[tuple[int, str]] | None) -> str:
+    if facts is None:
+        return ""
+    who = s.user.name or "a pessoa"
+    if not facts:
+        listed = "(vazia)"
+    else:
+        listed = "\n".join(f"- [{i}] {text}" for i, text in facts)
+    return f"""
+Memória de longo prazo: o que {who} pediu para você guardar em conversas anteriores. \
+Use só quando a pergunta depender disso; não puxe esses fatos para outros assuntos nem \
+recite a lista. Quando pedirem para lembrar ou guardar algo, chame remember; para corrigir, \
+remember com replaces igual ao número entre colchetes; para esquecer, forget. O que não \
+está nesta lista você não sabe sobre {who}: se perguntarem, diga que não tem isso guardado, \
+sem inventar e sem oferecer guardar.
+{listed}
+"""
+
+
+def _prompt_pt(
+    s: Settings, loc: Locale, can: str, facts: list[tuple[int, str]] | None = None
+) -> str:
     lang = loc.language_name[:1].upper() + loc.language_name[1:]
     where = f" Localização: {s.location.display_name}." if s.location.display_name else ""
     hemi = ""
@@ -107,7 +128,7 @@ Fuso horário: {s.location.tz_name}.{where}{hemi} Cada mensagem chega com uma no
 quando for útil, mas nunca a mencione nem a repita.
 
 {_abilities_pt(can)}
-
+{_memory_pt(s, facts)}
 Como responder:
 - {lang} correto, com a polidez de um mordomo britânico.
 - Seja breve: no máximo {s.persona.max_sentences} frases curtas, porque suas respostas \
@@ -179,7 +200,28 @@ def _abilities_en(can: str) -> str:
     )
 
 
-def _prompt_en(s: Settings, loc: Locale, can: str) -> str:
+def _memory_en(s: Settings, facts: list[tuple[int, str]] | None) -> str:
+    if facts is None:
+        return ""
+    who = s.user.name or "the user"
+    if not facts:
+        listed = "(empty)"
+    else:
+        listed = "\n".join(f"- [{i}] {text}" for i, text in facts)
+    return f"""
+Long-term memory: what {who} asked you to keep in earlier conversations. Use it only \
+when the question depends on it; do not bring these facts into other topics or recite the \
+list. When asked to remember or note something, call remember; to correct a fact, \
+remember with replaces set to the number in brackets; to forget one, forget. Whatever is \
+not on this list you do not know about {who}: if asked, say you have nothing noted on it, \
+without making it up or offering to note it.
+{listed}
+"""
+
+
+def _prompt_en(
+    s: Settings, loc: Locale, can: str, facts: list[tuple[int, str]] | None = None
+) -> str:
     where = f" Location: {s.location.display_name}." if s.location.display_name else ""
     hemi = ""
     if s.location.latitude is not None:
@@ -210,7 +252,7 @@ Timezone: {s.location.tz_name}.{where}{hemi} Each message arrives with an automa
 but never mention or repeat it.
 
 {_abilities_en(can)}
-
+{_memory_en(s, facts)}
 How to reply:
 {language_rule}
 - Be brief: at most {s.persona.max_sentences} short sentences, because your replies will be \
@@ -229,12 +271,17 @@ previous reply or comment on the odd word.
 """
 
 
-def build_system_prompt(s: Settings, capabilities: list[str] | None = None) -> str:
-    """Static per session, so Ollama can reuse its cached prefix between turns."""
+def build_system_prompt(
+    s: Settings,
+    capabilities: list[str] | None = None,
+    facts: list[tuple[int, str]] | None = None,
+) -> str:
+    """Stable between turns, so Ollama can reuse its cached prefix. It changes only when a
+    fact is remembered or forgotten. `facts` = None leaves the memory section out."""
     can = "; ".join(capabilities or [])
     if s.locale.lang == "pt":
-        return _prompt_pt(s, s.locale, can)
-    return _prompt_en(s, s.locale, can)
+        return _prompt_pt(s, s.locale, can, facts)
+    return _prompt_en(s, s.locale, can, facts)
 
 
 # Repeated next to every message: in the system prompt alone, the model still answered

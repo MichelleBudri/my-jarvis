@@ -14,6 +14,7 @@ import numpy as np
 
 OnStart = Callable[[], None]
 OnLevel = Callable[[float], None]
+OnAudio = Callable[[np.ndarray], None]
 
 
 class Speaker(Protocol):
@@ -44,6 +45,9 @@ class PiperSpeaker:
         self._stop = threading.Event()
         self._speaking = False
         self.on_level: OnLevel | None = None  # loudness of each block played, for the HUD
+        # Each block played, at 16 kHz, as it goes to the speakers: the echo canceller's
+        # reference. Called from the audio thread.
+        self.on_audio: OnAudio | None = None
 
     @property
     def speaking(self) -> bool:
@@ -68,22 +72,29 @@ class PiperSpeaker:
     ) -> bool:
         import sounddevice as sd
 
+        from backend.audio.aec import resample
         from backend.audio.level import level
+        from backend.audio.vad import SAMPLE_RATE
 
         rate = self._voice.config.sample_rate
         block = rate // 20  # 50 ms: small enough for instant interruption
         started = False
+        on_audio = self.on_audio
         with sd.OutputStream(samplerate=rate, channels=1, dtype="int16", device=self.device) as out:
             while (audio := audio_q.get()) is not None:
                 if not started and on_start:
                     on_start()
                     started = True
+                # Resampled per sentence, not per block: no filter edges every 50 ms.
+                ref = resample(audio, rate) if on_audio else None
                 for i in range(0, len(audio), block):
                     if self._stop.is_set():
                         out.abort()
                         return False
                     if on_level:
                         on_level(level(audio[i : i + block]))
+                    if ref is not None:
+                        on_audio(ref[i * SAMPLE_RATE // rate : (i + block) * SAMPLE_RATE // rate])
                     out.write(audio[i : i + block])
         if on_level:
             on_level(0.0)

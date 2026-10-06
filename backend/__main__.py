@@ -39,11 +39,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     voice.add_argument("--no-briefing", action="store_true", help="skip the weather and news")
     voice.add_argument("--no-hud", action="store_true", help="no holographic interface")
+    voice.add_argument("--at-login", action="store_true", help=argparse.SUPPRESS)
+    autostart = sub.add_parser("autostart", help="launch Jarvis at login (macOS LaunchAgent)")
+    autostart.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "install", "uninstall", "start", "stop"],
+        default="status",
+    )
+    autostart.add_argument("--no-briefing", action="store_true", help="no briefing at login")
+    autostart.add_argument("--no-hud", action="store_true", help="no HUD at login")
     briefing = sub.add_parser("briefing", help="print the activation briefing, with timings")
     briefing.add_argument("-s", "--speak", action="store_true", help="read it aloud too")
     demo = sub.add_parser("hud-demo", help="show the HUD with a scripted conversation (no mic)")
     demo.add_argument("--sample", action="store_true", help="fixed panels, no network")
+    window = sub.add_parser("hud-window", help="open the HUD in a native window")
+    window.add_argument("--url", help="default: the configured server address")
+    window.add_argument("--parent", type=int, help=argparse.SUPPRESS)  # close when it exits
     sub.add_parser("wake-test", help="show live wake word scores to tune the threshold")
+    sub.add_parser("echo-test", help="measure how well echo cancellation works in this room")
+    memory = sub.add_parser("memory", help="list or forget what Jarvis remembers about you")
+    memory.add_argument("action", nargs="?", choices=["list", "forget", "clear"], default="list")
+    memory.add_argument("id", nargs="?", type=int, help="the memory to forget (see `memory`)")
     sub.add_parser("prompt", help="print the current system prompt")
     bench = sub.add_parser("bench", help="compare LLM latency across models")
     bench.add_argument("models", nargs="*", help="Ollama models (default: the configured one)")
@@ -65,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice":
         from backend.voice import run_voice
 
+        if args.at_login:
+            from backend.autostart import log_path, rotate_log
+
+            rotate_log(log_path(settings))
         wake_word = False if args.no_wake else None
         briefing = False if args.no_briefing else None
         return _run(
@@ -75,8 +96,18 @@ def main(argv: list[str] | None = None) -> int:
                 briefing=briefing,
                 started_at=STARTED_AT,
                 hud=False if args.no_hud else None,
+                at_login=args.at_login,
             )
         )
+    if args.command == "autostart":
+        from backend.autostart import run_autostart
+
+        voice_args = [
+            flag
+            for flag, on in (("--no-briefing", args.no_briefing), ("--no-hud", args.no_hud))
+            if on
+        ]
+        return run_autostart(settings, args.action, voice_args)
     if args.command == "briefing":
         from backend.chat import run_briefing
 
@@ -85,10 +116,19 @@ def main(argv: list[str] | None = None) -> int:
         from backend.hud.demo import run_demo
 
         return _run(run_demo(settings, sample=args.sample))
+    if args.command == "hud-window":
+        from backend.hud.window import run_window
+
+        url = args.url or f"http://{settings.server.host}:{settings.server.port}"
+        return run_window(url, settings.assistant_name, args.parent)
     if args.command == "wake-test":
         from backend.wake_test import run_wake_test
 
         return _run(run_wake_test(settings))
+    if args.command == "echo-test":
+        from backend.echo_test import run_echo_test
+
+        return _run(run_echo_test(settings))
     if args.command == "bench":
         from backend.bench import run_bench
 
@@ -97,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
         from backend.bench_stt import run_bench_stt
 
         return _run(run_bench_stt(settings, args.models))
+    if args.command == "memory":
+        from backend.memory.cli import run_memory
+
+        return run_memory(settings, args.action, args.id)
     if args.command in {"prompt", "config"}:
         import asyncio
 
@@ -105,8 +149,14 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(resolve_location(settings))
     if args.command == "prompt":
         from backend.brain.prompts import build_context_note, build_system_prompt
+        from backend.memory.store import MemoryStore
 
-        print(build_system_prompt(settings))
+        facts = None
+        if "memory" in settings.tools.enabled:
+            store = MemoryStore(settings.db_path)
+            facts = store.facts()
+            store.close()
+        print(build_system_prompt(settings, facts=facts))
         print(build_context_note(settings, first_turn=True))
         return 0
     if args.command == "config":

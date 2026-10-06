@@ -57,3 +57,26 @@ class Microphone:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+
+class SilenceWatch:
+    """Notices a microphone that only delivers zeros: macOS does that, with no error, when
+    the app running Jarvis was denied microphone access (common when launched at login)."""
+
+    def __init__(self, frames: int = 94) -> None:  # 94 frames of 32 ms = 3 s
+        self.frames = frames
+        self.seen = 0
+        self.done = False
+
+    def __call__(self, frame: np.ndarray) -> bool:
+        """True once, when the first `frames` frames were all digital silence."""
+        if self.done:
+            return False
+        if frame.any():
+            self.done = True
+            return False
+        self.seen += 1
+        if self.seen >= self.frames:
+            self.done = True
+            return True
+        return False

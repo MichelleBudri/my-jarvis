@@ -7,7 +7,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-6_of_7-ffb340?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-7_of_7-3dffb0?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
@@ -47,7 +47,21 @@ The language model, speech recognition and voice all run locally: no API keys, n
     </td>
     <td valign="top">
       <h3>🛰️ Futuristic HUD</h3>
-      An original holographic interface in your browser: rings that react to your voice and Jarvis's, a live transcript and panels for weather, news, system and timers.
+      An original holographic interface in its own window: rings that react to your voice and Jarvis's, a live transcript and panels for weather, news, system and timers.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>🧠 Remembers you</h3>
+      Ask it to remember something and it will know it in every conversation after that. You can list and delete what it keeps at any time.
+    </td>
+    <td valign="top">
+      <h3>🗣️ Interrupt it</h3>
+      Echo cancellation removes Jarvis's own voice from the microphone, so you can cut in mid-sentence without headphones.
+    </td>
+    <td valign="top">
+      <h3>🔁 Always there</h3>
+      Starts with your Mac and waits quietly for "Hey Jarvis". Only one copy runs at a time.
     </td>
   </tr>
 </table>
@@ -60,12 +74,13 @@ The language model, speech recognition and voice all run locally: no API keys, n
 
 <br>
 
-When `voice` starts, the HUD opens in your browser at <http://127.0.0.1:8765>. It is served by Jarvis itself, so there is nothing else to run.
+When `voice` starts, the HUD opens in its own window. It is served by Jarvis itself at <http://127.0.0.1:8765>, so it also works in any browser tab, on another monitor or in full screen.
 
 - **The core** changes with the state: dim and slow while it sleeps, cyan while it listens, amber and spinning fast while it thinks, bright while it speaks. The ring of bars follows the loudness of your voice, then of Jarvis's.
 - **The transcript** shows what you said and the reply as it is generated, with the tool being used ("checking the weather").
 - **The panels** show the weather, the latest AI headlines, battery, CPU and memory, timers counting down, and how long each reply took (speech recognition, first word from the model, first sound).
 - **Tap the core** (or press <kbd>Space</kbd>) to wake Jarvis without the wake word, or to send it back to sleep mid-sentence. <kbd>F</kbd> toggles full screen.
+- **Closed the window?** Jarvis keeps running; `uv run python -m backend hud-window` opens it again.
 
 To see it without the microphone or the models, run `uv run python -m backend hud-demo`: a scripted conversation drives the interface (`--sample` uses fixed panel data and works offline).
 
@@ -78,13 +93,17 @@ flowchart LR
     VAD --> STT["Transcription<br/><sub>mlx-whisper</sub>"]
     STT --> LLM{{"🧠 Brain<br/><sub>Ollama · qwen3</sub>"}}
     LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers</sub>"]
+    LLM <--> MEM[("Memory<br/><sub>SQLite</sub>")]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
-    LLM -. WebSocket .-> HUD[["🛰️ HUD<br/><sub>browser</sub>"]]
+    TTS -. reference .-> AEC["Echo cancellation<br/><sub>WebRTC AEC3</sub>"]
+    MIC --> AEC
+    AEC -. barge-in .-> VAD
+    LLM -. WebSocket .-> HUD[["🛰️ HUD<br/><sub>window · browser</sub>"]]
 
     classDef core fill:#0a1420,stroke:#00e5ff,color:#eafcff,stroke-width:2px
     classDef io fill:#02050a,stroke:#ffb340,color:#ffd59a
-    class WAKE,VAD,STT,TOOLS,TTS,HUD core
+    class WAKE,VAD,STT,TOOLS,MEM,TTS,AEC,HUD core
     class LLM core
     class MIC,SPK io
 ```
@@ -109,10 +128,14 @@ The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech re
 |---|---|
 | `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news and opens the HUD (`--no-briefing` and `--no-hud` skip them, `--no-wake` listens all the time, `-r` resumes the last conversation) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
+| `uv run python -m backend autostart install` | Launch Jarvis at login, in the background (`status`, `stop`, `start`, `uninstall`; `--no-briefing` to start silently) |
+| `uv run python -m backend memory` | List what Jarvis remembers about you (`memory forget 3`, `memory clear`) |
+| `uv run python -m backend hud-window` | Open the HUD window again while Jarvis runs |
 | `uv run python -m backend hud-demo` | The HUD with a scripted conversation: no microphone or models needed (`--sample` for fixed, offline panel data) |
 | `uv run python -m backend doctor` | Health check: Ollama, models, voice, wake word, microphone, owner, location |
 | `uv run python -m backend briefing` | Print the activation briefing with its timings (`-s` reads it aloud) |
 | `uv run python -m backend wake-test` | Live wake word scores, to tune the detection threshold |
+| `uv run python -m backend echo-test` | Jarvis speaks for 10 s and measures how much of its own voice the microphone still hears |
 | `uv run python -m backend bench [models...]` | Compare LLM latency across Ollama models over a short scripted conversation |
 | `uv run python -m backend bench-stt [models...]` | Record one phrase and compare Whisper models on it |
 | `uv run python -m backend prompt` | Print the current system prompt |
@@ -173,8 +196,37 @@ Jarvis calls tools on its own when a question needs live data or an action:
 | AI news | "Any AI news?" · "Anything about robots?" | RSS feeds in `config.yaml` (`news.feeds`) |
 | System | "How much battery is left?" · "Set the volume to 30" · "Open Safari" | macOS (`pmset`, `osascript`, `open`) |
 | Timers | "Remind me in 10 minutes to take the cake out" · "Make it 15" · "Cancel the timer" | Local; announced out loud when they end |
+| Clock | "How long until 6 pm?" · "How many days until Christmas?" | Local; the code does the arithmetic, not the model |
+| Memory | "Remember that I take my coffee black" · "Actually, make it with milk" · "Forget that" | Local (`data/jarvis.db`) |
 
 When a tool takes a moment (a slow news feed, for example), Jarvis says "One moment" so you are not left in silence. In voice mode, saying goodbye, "that's all" or "you can rest" sends Jarvis back to sleep. Unmuting brings back the volume you had before. Turn tools off with `tools.enabled` in `config.yaml` (for example `JARVIS_TOOLS__ENABLED='["weather", "timers"]'`). Timers live in memory and are cleared when Jarvis quits.
+
+</details>
+
+<details>
+<summary><b>Memory</b></summary>
+<br>
+
+Jarvis keeps a fact only when you ask it to ("remember that...", "note that...", "don't forget..."). Questions such as "do you remember how I take my coffee?" never store anything: that is checked in code, not left to the model, because the model sometimes guessed an answer and saved the guess. Corrections replace the old fact.
+
+Everything it keeps goes into every conversation, up to 100 short facts, stored locally in `data/jarvis.db`. `uv run python -m backend memory` lists them; `memory forget <id>` and `memory clear` delete them without asking Jarvis. Turn it off by removing `memory` from `tools.enabled`.
+
+</details>
+
+<details>
+<summary><b>Launch at login</b></summary>
+<br>
+
+```bash
+uv run python -m backend autostart install   # starts now and on every login
+uv run python -m backend autostart status    # running? where is the log?
+uv run python -m backend autostart stop      # until the next login
+uv run python -m backend autostart uninstall
+```
+
+It builds a small `Jarvis.app` in `data/` and installs a LaunchAgent (`~/Library/LaunchAgents/local.my-jarvis.voice.plist`) that runs `voice` through it in the background, waits up to 2 minutes for Ollama to start and restarts Jarvis if it crashes. The app is what makes macOS show "Jarvis", with its own icon, in Activity Monitor, Login Items, the Dock (for the HUD window) and the microphone permission, instead of "python". Output goes to `data/logs/jarvis.log`. Add `--no-briefing` to `install` if you prefer it to start silently. After updating Python (`uv python upgrade`), run `autostart install` again.
+
+The first time, macOS asks for microphone access for Jarvis. If Jarvis does not hear you, allow it in **System Settings → Privacy & Security → Microphone**; the log says so when the microphone delivers only silence. Only one Jarvis runs at a time, so a `voice` started in the terminal while it runs in the background tells you so and exits.
 
 </details>
 
@@ -182,7 +234,7 @@ When a tool takes a moment (a slow news feed, for example), Jarvis says "One mom
 <summary><b>HUD</b></summary>
 <br>
 
-The HUD settings live in `config.yaml`: `hud.enabled`, `hud.open_browser` and the address in `server.host` / `server.port` (default `127.0.0.1:8765`). If a HUD page is already open, Jarvis reconnects it instead of opening a new tab. If the port is busy, Jarvis runs without the HUD and says so.
+The HUD settings live in `config.yaml`: `hud.enabled`, `hud.window` (a native window, or `false` for a browser tab), `hud.open_on_start` and the address in `server.host` / `server.port` (default `127.0.0.1:8765`). If a HUD page is already open, Jarvis reconnects it instead of opening another. If the window cannot open, the HUD opens in the browser. If the port is busy, Jarvis runs without the HUD and says so.
 
 Only pages served from this address (or the Vite dev server) may connect: the WebSocket checks the page's origin, so other websites open in your browser cannot read the conversation. To open the HUD from another device on your network, set `JARVIS_SERVER__HOST` to this Mac's address, and keep in mind that anyone on that network can then open it too.
 
@@ -206,11 +258,13 @@ sleeping ──"Hey Jarvis"──▶ listening ──speech──▶ thinking �
 
 If it misses you or wakes up by itself, run `uv run python -m backend wake-test` and adjust `JARVIS_WAKEWORD__THRESHOLD` (default 0.5; lower is more sensitive). The timings are `JARVIS_WAKEWORD__LISTEN_TIMEOUT_S` and `_FOLLOW_UP_S`, and `JARVIS_WAKEWORD__CHIME=false` silences the chimes.
 
-By default Jarvis is half duplex: it stops listening while it thinks and speaks, so it never hears itself through the speakers. With headphones you can turn on barge-in and interrupt it mid-sentence:
+By default Jarvis is half duplex: it stops listening while it thinks and speaks, so it never hears itself through the speakers. Turn on barge-in to interrupt it mid-sentence:
 
 ```bash
 JARVIS_AUDIO__BARGE_IN=true uv run python -m backend voice
 ```
+
+No headphones needed: echo cancellation (WebRTC's AEC3, running locally) receives everything Jarvis plays and removes it from the microphone. Run `uv run python -m backend echo-test` to check your room: on a MacBook Air at normal volume, the speech detector went from hearing Jarvis in 88% of the frames to 0%. At high volume you may need to speak up, or keep talking for a second or two, before Jarvis notices you; with the `say` voice there is no echo cancellation, so use headphones.
 
 On start, Jarvis says the briefing: a greeting and today's weather, written from the forecast numbers, then the most relevant AI headlines picked and retold by the model, which writes them while the first part is spoken. It starts about 2 seconds after launch, before speech recognition has finished loading, and ends with a line showing when each part was ready. A source that fails or takes over `JARVIS_BRIEFING__FETCH_TIMEOUT_S` (default 5) is left out. Turn it off with `JARVIS_BRIEFING__ENABLED=false` or `voice --no-briefing`.
 
@@ -229,7 +283,7 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 | 4 | Tools: weather, AI news, system, timers | ✅ Done |
 | 5 | Activation briefing | ✅ Done |
 | 6 | Holographic HUD | ✅ Done |
-| 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | 🔜 Next |
+| 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | ✅ Done |
 
 
 ## ◈ Stack
@@ -245,6 +299,8 @@ Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0a1420?style=flat-square&logo=fastapi&logoColor=00e5ff)
 ![TypeScript](https://img.shields.io/badge/TypeScript-0a1420?style=flat-square&logo=typescript&logoColor=00e5ff)
 ![Vite](https://img.shields.io/badge/Vite-0a1420?style=flat-square&logo=vite&logoColor=00e5ff)
+![pywebview](https://img.shields.io/badge/pywebview-0a1420?style=flat-square)
+![WebRTC AEC3](https://img.shields.io/badge/WebRTC_AEC3-0a1420?style=flat-square&logo=webrtc&logoColor=00e5ff)
 ![SQLite](https://img.shields.io/badge/SQLite-0a1420?style=flat-square&logo=sqlite&logoColor=00e5ff)
 ![uv](https://img.shields.io/badge/uv-0a1420?style=flat-square&logo=uv&logoColor=00e5ff)
 

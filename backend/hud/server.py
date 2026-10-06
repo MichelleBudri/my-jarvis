@@ -142,8 +142,12 @@ class HudServer:
             await asyncio.wait_for(self._task, 2)
 
 
-async def open_hud(bus: HudBus, url: str) -> None:
-    """Open the HUD in the browser, unless a page left open has already reconnected."""
+async def open_hud(bus: HudBus, url: str, window=None) -> None:
+    """Open the HUD, unless a page left open has already reconnected: in `window` (a
+    HudWindow) if given, falling back to the browser when it cannot open."""
     await asyncio.sleep(RECONNECT_S)
-    if not bus.clients:
-        await asyncio.to_thread(webbrowser.open, url)
+    if bus.clients:
+        return
+    if window is not None and await window.open():
+        return
+    await asyncio.to_thread(webbrowser.open, url)

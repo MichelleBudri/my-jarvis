@@ -420,15 +420,24 @@ def test_parse_battery_and_volume():
     assert parse_battery(text) == {
         "percent": 85,
         "status": "discharging",
+        "charging": False,
         "on_power_adapter": False,
-        "time_remaining": "4h05",
+        "battery_time_left": "4h05",
     }
-    charging = "Now drawing from 'AC Power'\n -InternalBattery-0\t100%; charged; 0:00 remaining"
-    assert parse_battery(charging) == {
+    charged = "Now drawing from 'AC Power'\n -InternalBattery-0\t100%; charged; 0:00 remaining"
+    assert parse_battery(charged) == {
         "percent": 100,
         "status": "charged",
+        "charging": False,
         "on_power_adapter": True,
     }
+    # The real case: 36 minutes to a full charge, not 36 minutes of battery.
+    charging = "Now drawing from 'AC Power'\n -InternalBattery-0\t91%; charging; 0:36 remaining"
+    out = parse_battery(charging)
+    assert out["charging"] and out["time_until_full"] == "0h36"
+    assert "battery_time_left" not in out
+    held = "Now drawing from 'AC Power'\n -InternalBattery-0\t80%; AC attached; not charging"
+    assert parse_battery(held)["charging"] is False  # optimised charging holds it at 80%
     assert parse_battery("Now drawing from 'AC Power'") is None
     vol = "output volume:25, input volume:50, alert volume:100, output muted:false"
     assert parse_volume(vol) == {"volume_percent": 25, "muted": False}
@@ -571,8 +580,9 @@ def test_system_status_topic_limits_the_report(monkeypatch):
         "battery": {
             "percent": 90,
             "status": "charging",
+            "charging": True,
             "on_power_adapter": True,
-            "time_remaining": "0h40",
+            "time_until_full": "0h40",
         }
     }
     assert "disk" in asyncio.run(system.system_status("bogus"))  # unknown topic → everything
