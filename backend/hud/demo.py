@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import re
 import time
 
 from rich.console import Console
@@ -25,6 +26,7 @@ from backend.tools.weather import WeatherService
 console = Console(highlight=False)
 
 FRAME_S = 0.032  # one microphone frame
+WORD_S = 0.22  # demo speech: seconds per word
 SCRIPT = {
     "pt": [
         (
@@ -35,7 +37,7 @@ SCRIPT = {
         (
             "Como está o tempo agora?",
             "get_weather",
-            "Agora faz 14 graus, com algumas nuvens, senhora. Amanhã deve chover, "
+            "Lá fora estão 14 graus, com algumas nuvens, senhora. Amanhã deve chover, "
             "então convém deixar o guarda-chuva à mão.",
         ),
     ],
@@ -48,12 +50,20 @@ SCRIPT = {
         (
             "How's the weather right now?",
             "get_weather",
-            "It is 14 degrees and partly cloudy, madam. "
+            "In London, it's 14 degrees with a few clouds, madam. "
             "Light rain is likely tomorrow, so an umbrella would be wise.",
         ),
     ],
 }
 
+
+# Memory as a typical run shows it (see benchmarks): the demo itself holds far less.
+SAMPLE_FOOTPRINT = {
+    "type": "footprint",
+    "jarvis_mb": 1310.0,
+    "model_mb": 5383.7,
+    "model": "qwen3:8b",
+}
 
 SAMPLE_PANELS = [
     {
@@ -171,13 +181,15 @@ class Demo:
         await asyncio.sleep(0.9)
         self.state("speaking")
         words = answer.split(" ")
-        talking = asyncio.create_task(self.levels("out", len(words) * 0.22, voiced=True))
-        for word in words:
-            self.bus.publish({"type": "reply", "delta": f"{word} "})
-            await asyncio.sleep(0.22)
+        talking = asyncio.create_task(self.levels("out", len(words) * WORD_S, voiced=True))
+        # Like Piper: each sentence as it starts, with how long it takes to say.
+        for sentence in re.split(r"(?<=[.!?])\s+", answer):
+            seconds = len(sentence.split()) * WORD_S
+            self.bus.publish({"type": "reply", "delta": f"{sentence} ", "duration_s": seconds})
+            await asyncio.sleep(seconds)
         await talking
         self.bus.publish({"type": "level", "out": 0.0})
-        self.bus.publish({"type": "reply_end"})
+        self.bus.publish({"type": "reply_end", "cut": False})
         self.bus.publish(
             {
                 "type": "stats",
@@ -224,9 +236,15 @@ async def run_demo(s: Settings, sample: bool = False) -> int:
         }
     )
     console.print(f"[bold cyan]HUD demo[/] · {server.url} · Ctrl+C to quit")
+    # The HUD's buttons answer, but nothing on this Mac changes: no LaunchAgent, no file.
+    bus.publish({"type": "autostart", "enabled": True})
+    bus.handle("autostart", lambda on: bus.publish({"type": "autostart", "enabled": bool(on)}))
+    bus.handle(
+        "export", lambda _: bus.publish({"type": "exported", "error": "not saved in the demo"})
+    )
     if sample:
         tasks = []
-        for panel in SAMPLE_PANELS:
+        for panel in [*SAMPLE_PANELS, SAMPLE_FOOTPRINT]:
             bus.publish(panel)
     else:
         news = NewsService(s) if s.news.feeds else None

@@ -21,7 +21,8 @@ BACKGROUND = "#02050a"  # the HUD's, so the window never flashes white while loa
 
 class _Api:
     """Exposed to the page as `window.pywebview.api`: WebKit's Fullscreen API is off in
-    pywebview windows, so the HUD's F key asks the window instead."""
+    pywebview windows, so the HUD's F key asks the window instead, and copying and opening
+    links too."""
 
     def __init__(self) -> None:
         self.window = None
@@ -29,6 +30,35 @@ class _Api:
     def toggle_fullscreen(self) -> None:
         if self.window is not None:
             self.window.toggle_fullscreen()
+
+    def open_url(self, url: str) -> bool:
+        """A news item clicked in the HUD: read it in the default browser, not in here."""
+        from urllib.parse import urlparse
+
+        if urlparse(url).scheme not in ("http", "https"):
+            return False
+        import webbrowser
+
+        return webbrowser.open(url)
+
+    def copy(self, text: str) -> bool:
+        """The HUD's copy buttons: WebKit in a pywebview window may refuse the clipboard."""
+        return copy_to_clipboard(text)
+
+
+def copy_to_clipboard(text: str) -> bool:
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        board = NSPasteboard.generalPasteboard()
+        board.clearContents()
+        return bool(board.setString_forType_(text, NSPasteboardTypeString))
+    except Exception:  # noqa: BLE001 - no PyObjC: pbcopy, told the text is UTF-8
+        import subprocess
+
+        env = {**os.environ, "LANG": "en_US.UTF-8"}
+        done = subprocess.run(["pbcopy"], input=text.encode(), env=env, check=False)
+        return done.returncode == 0
 
 
 def _name_app(name: str) -> None:

@@ -309,6 +309,16 @@ def test_weather_summary(owner_env):
     assert describe(95, "en") == "thunderstorm" and describe(1234, "pt")
 
 
+def test_weather_result_tells_the_model_to_speak_of_the_place(owner_env):
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=FORECAST))
+    )
+    out = asyncio.run(WeatherService(Settings(), client).forecast())
+    place = out["place"].split(",")[0]
+    assert f'"Em {place}, está garoando' in out["how_to_reply"]
+    assert "a senhora está com" in out["how_to_reply"]  # named as what not to say
+
+
 def test_weather_without_location_asks_for_city():
     with pytest.raises(ToolError, match="ask which city"):
         asyncio.run(WeatherService(Settings()).forecast())
@@ -395,6 +405,10 @@ def test_news_service_filters_and_caches(monkeypatch):
         "hours_ago": 1,
         "summary": "Short & sweet.",
     }
+    # The model never gets links; the HUD does, when the feed has one.
+    linked = asyncio.run(svc.headlines(count=3, links=True))["items"]
+    assert any("link" in i for i in linked)
+    assert all(i["link"].startswith("http") for i in linked if "link" in i)
     robots = asyncio.run(svc.headlines(topic="robôs laundry"))
     assert robots["found"] == 0
     robots = asyncio.run(svc.headlines(topic="Laundry"))

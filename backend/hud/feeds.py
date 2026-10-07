@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from backend.config import Settings
+from backend.footprint import measure
 from backend.hud.bus import HudBus
 from backend.tools.news import NewsService
 from backend.tools.registry import ToolError
@@ -17,6 +19,7 @@ from backend.tools.weather import CACHE_S, WeatherService
 log = logging.getLogger(__name__)
 
 SYSTEM_EVERY_S = 10
+FOOTPRINT_EVERY_S = 30  # `top` takes a moment of CPU; memory changes slowly
 RETRY_AFTER_S = 60  # a source that failed is tried again sooner than its usual period
 WEATHER_DAYS = 3
 NEWS_ITEMS = 5
@@ -43,7 +46,12 @@ def weather_panel(forecast: dict[str, Any]) -> dict[str, Any]:
 
 def news_panel(found: dict[str, Any]) -> dict[str, Any]:
     items = [
-        {"title": i["title"], "source": i["source"], "hours_ago": i.get("hours_ago")}
+        {
+            "title": i["title"],
+            "source": i["source"],
+            "hours_ago": i.get("hours_ago"),
+            **({"link": i["link"]} if i.get("link") else {}),
+        }
         for i in found.get("items") or []
     ]
     return {"type": "news", "items": items}
@@ -78,6 +86,10 @@ async def _every(
         await asyncio.sleep(wait)
 
 
+async def footprint_panel(s: Settings) -> dict:
+    return (await measure(s, os.getpid())).as_event()
+
+
 def start_feeds(
     s: Settings,
     bus: HudBus,
@@ -88,13 +100,16 @@ def start_feeds(
         return weather_panel(await weather.forecast(days=WEATHER_DAYS))
 
     async def get_news() -> dict:
-        return news_panel(await news.headlines(count=NEWS_ITEMS))
+        return news_panel(await news.headlines(count=NEWS_ITEMS, links=True))
 
     async def get_system() -> dict:
         topics = await asyncio.gather(*(system_status(t) for t in ("battery", "cpu", "memory")))
         return system_panel({k: v for t in topics for k, v in t.items()})
 
-    jobs = [_every("system", SYSTEM_EVERY_S, get_system, bus)]
+    jobs = [
+        _every("system", SYSTEM_EVERY_S, get_system, bus),
+        _every("footprint", FOOTPRINT_EVERY_S, lambda: footprint_panel(s), bus),
+    ]
     if weather is not None and s.location.resolved:
         jobs.append(_every("weather", CACHE_S, get_weather, bus))
     if news is not None:

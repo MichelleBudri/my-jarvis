@@ -92,6 +92,30 @@ def test_websocket_sends_snapshot_then_live_events_and_takes_commands(tmp_path):
     assert bus.clients == 0
 
 
+def test_websocket_takes_requests_with_a_value_of_the_right_type(tmp_path):
+    bus = HudBus()
+    got: list[tuple] = []
+    bus.handle("autostart", lambda value: got.append(("autostart", value)))
+    bus.handle("export", lambda value: got.append(("export", value)))
+    client = TestClient(create_app(bus, allowed_origins("127.0.0.1", 8765), tmp_path))
+    with client.websocket_connect("/ws", headers={"origin": ORIGIN}) as ws:
+        ws.receive_json()  # transcript
+        ws.send_json({"type": "autostart", "value": "yes"})  # not a bool
+        ws.send_json({"type": "autostart"})
+        ws.send_json({"type": "autostart", "value": False})
+        ws.send_json({"type": "export", "value": "/etc/passwd"})  # takes no value
+        ws.send_json({"type": "export"})
+        bus.publish({"type": "reply_end"})
+        ws.receive_json()
+    assert got == [("autostart", False), ("export", None)]
+
+
+def test_autostart_state_is_replayed_to_new_pages():
+    bus = HudBus()
+    bus.publish({"type": "autostart", "enabled": True})
+    assert {"type": "autostart", "enabled": True} in bus.snapshot()
+
+
 def test_websocket_refuses_other_sites(tmp_path):
     bus = HudBus()
     client = TestClient(create_app(bus, allowed_origins("127.0.0.1", 8765), tmp_path))
@@ -245,3 +269,19 @@ def test_old_open_browser_setting_still_works(monkeypatch):
     monkeypatch.setenv("JARVIS_HUD__OPEN_BROWSER", "false")
     assert Settings().hud.open_on_start is False
     assert Settings().hud.window is True
+
+
+def test_news_panel_carries_only_web_links():
+    from backend.hud.feeds import news_panel
+    from backend.tools.news import is_web_link
+
+    found = {
+        "items": [
+            {"title": "A", "source": "X", "hours_ago": 1, "link": "https://example.com/a"},
+            {"title": "B", "source": "Y", "hours_ago": 2},
+        ]
+    }
+    items = news_panel(found)["items"]
+    assert items[0]["link"] == "https://example.com/a" and "link" not in items[1]
+    assert is_web_link("https://news.google.com/rss/articles/x")
+    assert not is_web_link("javascript:alert(1)") and not is_web_link("file:///etc/passwd")

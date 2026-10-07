@@ -104,6 +104,7 @@ body {
 .top,
 .col,
 .stage,
+.talk,
 .transcript,
 .bottom {
   position: relative;
@@ -369,6 +370,39 @@ ul {
   overflow: hidden;
 }
 
+.news a.link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.news a.link::after {
+  content: " ↗";
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.news a.link:hover,
+.news a.link:focus-visible {
+  color: var(--ice);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+
+.news a.link:hover::after,
+.news a.link:focus-visible::after {
+  opacity: 1;
+}
+
+.news a.link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .news .meta {
   display: flex;
   justify-content: space-between;
@@ -561,8 +595,97 @@ ul {
 
 /* Transcript */
 
-.transcript {
+.talk {
   grid-area: transcript;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.talk-tools {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  min-height: 22px;
+}
+
+.talk-note {
+  font: 11px var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-note.error {
+  color: var(--red);
+}
+
+.tool-button {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  font: 10px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.tool-button:hover {
+  border-color: var(--accent);
+  background: rgba(0, 229, 255, 0.08);
+}
+
+.tool-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.tool-button:focus-visible,
+.copy:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.copy {
+  margin-left: 10px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--dim);
+  font: 10px var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.line:hover .copy,
+.copy:focus-visible {
+  opacity: 1;
+}
+
+.copy:hover {
+  color: var(--accent);
+  border-color: var(--line);
+}
+
+.copy.done {
+  color: var(--green);
+  opacity: 1;
+}
+
+.transcript {
+  flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -606,6 +729,15 @@ ul {
   animation: blink 0.9s steps(1) infinite;
 }
 
+/* While typing the cursor stays lit and thin, like a caret; it blinks again between
+   sentences. */
+.cursor.typing {
+  width: 2px;
+  margin-left: 1px;
+  animation: none;
+  box-shadow: 0 0 6px var(--accent);
+}
+
 /* Footer */
 
 .bottom {
@@ -620,6 +752,176 @@ ul {
   text-transform: uppercase;
   color: var(--accent);
   opacity: 0.8;
+}
+
+/* Loading screen */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(circle at 50% 45%, rgba(6, 24, 39, 0.82), rgba(2, 5, 10, 0.96) 70%);
+  backdrop-filter: blur(6px);
+  transition: opacity 0.6s ease;
+}
+
+.boot[hidden] {
+  display: none;
+}
+
+.boot.leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-box {
+  width: min(440px, 100%);
+  font-family: var(--mono);
+  color: var(--white);
+}
+
+.boot-title {
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.boot-percent {
+  margin: 10px 0 14px;
+  font: 200 64px/1 var(--sans);
+  color: var(--ice);
+  text-shadow: 0 0 18px rgba(0, 229, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-percent sup {
+  font-size: 22px;
+  color: var(--dim);
+}
+
+.boot-bar {
+  height: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.boot-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  transition: width 0.4s ease;
+}
+
+.boot-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--grey);
+  white-space: pre;
+}
+
+.boot-steps li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.boot-steps .running {
+  color: var(--amber);
+}
+
+.boot-steps .done {
+  color: var(--cyan);
+}
+
+.boot-steps .offline,
+.boot-steps .failed {
+  color: var(--red);
+}
+
+@media (max-width: 480px) {
+  .boot-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bottom-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.switch[hidden] {
+  display: none;
+}
+
+.switch .knob {
+  position: relative;
+  width: 24px;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  transition: border-color 0.2s;
+}
+
+.switch .knob::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--grey);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.switch[aria-checked="true"] {
+  color: var(--accent);
+}
+
+.switch[aria-checked="true"] .knob {
+  border-color: var(--accent);
+}
+
+.switch[aria-checked="true"] .knob::after {
+  transform: translateX(12px);
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.switch:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.switch:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 
 /* Smaller screens: one column that scrolls */
@@ -653,6 +955,11 @@ ul {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .boot,
+  .boot-bar i {
+    transition: none;
+  }
+
   .backdrop::after,
   .status .dot {
     animation: none;

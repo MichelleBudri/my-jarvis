@@ -17,7 +17,18 @@ log = logging.getLogger(__name__)
 Event = dict[str, Any]
 
 # Kept and replayed to new clients; anything else (audio levels, tool calls) is live only.
-STICKY = {"hello", "state", "weather", "news", "system", "timers", "stats"}
+STICKY = {
+    "hello",
+    "state",
+    "weather",
+    "news",
+    "system",
+    "timers",
+    "stats",
+    "autostart",
+    "footprint",
+    "boot",
+}
 TRANSCRIPT_LINES = 8
 QUEUE_SIZE = 512  # ~15 s of audio levels; a stalled client loses the oldest events
 
@@ -28,6 +39,7 @@ class HudBus:
         self._sticky: dict[str, Event] = {}
         self._lines: list[dict[str, Any]] = []  # {"role", "text", "open"}
         self.on_command: Callable[[str], None] | None = None
+        self._handlers: dict[str, Callable[[Any], None]] = {}
 
     @property
     def clients(self) -> int:
@@ -82,3 +94,16 @@ class HudBus:
             self.on_command(name)
         except Exception:  # noqa: BLE001 - a bad click must not take the assistant down
             log.exception("HUD command %r failed", name)
+
+    def handle(self, name: str, handler: Callable[[Any], None]) -> None:
+        """Answer a request from the HUD: a switch ("autostart") or a button ("export")."""
+        self._handlers[name] = handler
+
+    def request(self, name: str, value: Any = None) -> None:
+        handler = self._handlers.get(name)
+        if handler is None:
+            return
+        try:
+            handler(value)
+        except Exception:  # noqa: BLE001
+            log.exception("HUD request %r failed", name)

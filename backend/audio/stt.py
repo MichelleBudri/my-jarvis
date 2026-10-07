@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import re
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,7 +46,8 @@ def is_farewell(text: str) -> bool:
 # The whole utterance must be a sign-off: "thanks, you can rest" yes, "you can rest after
 # telling me the weather" no. qwen3 often answered these without calling go_to_sleep.
 _SIGN_OFF_FILLER = (
-    r"(?:ok|okay|certo|ta bom|tá bom|então|entao|muito|obrigad[oa]|valeu|thanks|thank you|{name})"
+    r"(?:ok|okay|certo|ta bom|tá bom|está bom|esta bom|tudo bem|tudo certo|beleza|perfeito"
+    r"|ótimo|otimo|então|entao|muito|obrigad[oa]|valeu|thanks|thank you|great|{name})"
 )
 _SIGN_OFF = (
     r"pode (?:ir )?(?:descansar|dormir)|vai descansar|vá descansar|pode parar de ouvir"
@@ -62,6 +64,22 @@ def is_sign_off(text: str, name: str = "Jarvis") -> bool:
     tail = r"(?:por (?:enquanto|hoje|agora)|for now|for today)"
     pattern = rf"(?:{filler}\s+)*(?:{_SIGN_OFF})(?:\s+(?:{filler}|{tail}))*"
     return re.fullmatch(pattern, re.sub(r"\s+", " ", _normalize(text))) is not None
+
+
+_THANKS = re.compile(r"\b(?:obrigad[oa]|valeu|agradeço|agradeco|thanks|thank you|cheers)\b")
+
+
+def only_thanks(text: str, name: str = "Jarvis") -> bool:
+    """True when the whole utterance is a thank-you ("Muito obrigada, Jarvis.")."""
+    names = "|".join(re.escape(n) for n in {"jarvis", _normalize(name)})
+    words = rf"(?:{_SIGN_OFF_FILLER.format(name=names)}|agradeço|agradeco|cheers|senhor|sir)"
+    norm = re.sub(r"\s+", " ", _normalize(text))
+    return thanks(text) and re.fullmatch(rf"{words}(?: {words})*", norm) is not None
+
+
+def thanks(text: str) -> bool:
+    """True when the person thanked ("Obrigada, pode descansar")."""
+    return _THANKS.search(_normalize(text)) is not None
 
 
 def echoes_hint(text: str, hint: str | None) -> bool:
@@ -83,10 +101,14 @@ def is_wake_phrase(text: str, name: str = "Jarvis") -> bool:
 
 
 class WhisperSTT:
-    def __init__(self, model: str, language: str, hint: str | None = None) -> None:
+    def __init__(
+        self, model: str, language: str, hint: str | None = None, cache_mb: int | None = None
+    ) -> None:
         self.model = model
         self.language = language
         self.hint = hint
+        self.cache_mb = cache_mb  # cap on the GPU buffers MLX keeps for reuse; None = no cap
+        self._capped = False
         self._path: str | None = None
         self.last_raw = ""  # last transcript before filtering, for diagnostics
         # MLX state is not thread-safe: run every call on the same worker thread.
@@ -106,6 +128,12 @@ class WhisperSTT:
     def _transcribe_sync(self, audio: np.ndarray) -> str:
         import mlx_whisper
 
+        if self.cache_mb is not None and not self._capped:
+            import mlx.core as mx
+
+            mx.set_cache_limit(self.cache_mb * 1024**2)
+            self._capped = True
+
         result = mlx_whisper.transcribe(
             audio,
             path_or_hf_repo=self._model_path(),
@@ -123,6 +151,20 @@ class WhisperSTT:
 
     async def warmup(self) -> None:
         await self._run(np.zeros(16_000, dtype=np.float32))
+
+    def _unload_sync(self) -> None:
+        import mlx.core as mx
+        from mlx_whisper.transcribe import ModelHolder
+
+        ModelHolder.model = None
+        ModelHolder.model_path = None
+        gc.collect()
+        mx.clear_cache()
+
+    async def unload(self) -> None:
+        """Free the model (~500 MB); the next transcription loads it again (~0.3 s)."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, self._unload_sync)
 
     async def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe 16 kHz int16 audio; returns "" for silence or known hallucinations."""

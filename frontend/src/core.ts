@@ -31,6 +31,7 @@ const LOOKS: Record<Mode, Look> = {
 };
 
 const BARS = 120; // audio bars around the ring (mirrored: 60 distinct samples)
+const IDLE_FRAME_MS = 1000 / 15; // frame interval while sleeping or offline
 const SAMPLE_MS = 33; // how often the level history advances
 const SILENT_VOICE_MS = 300; // speaking with no levels (macOS `say`): animate anyway
 const TAU = Math.PI * 2;
@@ -90,11 +91,29 @@ export class Core {
   }
 
   start(): void {
+    let lastDraw = 0;
+    let running = false;
     const frame = (now: number) => {
-      this.draw(now);
+      if (document.hidden) {
+        running = false; // resumed by visibilitychange: nothing drawn while unseen
+        return;
+      }
+      // Asleep the core barely moves: a quarter of the frames is enough (D-37).
+      const idle = this.mode === "sleeping" || this.mode === "offline";
+      if (!idle || now - lastDraw >= IDLE_FRAME_MS) {
+        this.draw(now);
+        lastDraw = now;
+      }
       requestAnimationFrame(frame);
     };
-    requestAnimationFrame(frame);
+    const resume = () => {
+      if (running || document.hidden) return;
+      running = true;
+      this.last = performance.now(); // no jump after a long pause
+      requestAnimationFrame(frame);
+    };
+    document.addEventListener("visibilitychange", resume);
+    resume();
   }
 
   private onCore(e: MouseEvent): boolean {

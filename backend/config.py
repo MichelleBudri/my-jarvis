@@ -6,7 +6,7 @@ import os
 from datetime import tzinfo
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from dotenv import dotenv_values
@@ -157,6 +157,31 @@ class BriefingConfig(BaseModel):
     enabled: bool = True  # weather and AI news on start (`voice --no-briefing` skips it)
     headlines: int = 6  # candidates the model picks the one or two most relevant from
     fetch_timeout_s: float = 5  # a source slower than this is left out
+    network_wait_s: float = 20  # at login Wi-Fi may join late; then weather and news are skipped
+
+
+class ResourcesConfig(BaseModel):
+    """How much memory the voice assistant holds while nobody talks to it (D-37)."""
+
+    # performance: everything always loaded · balanced: unload the model and Whisper after
+    # `idle_minutes` asleep · economy: unload them as soon as Jarvis goes to sleep
+    profile: Literal["performance", "balanced", "economy"] = "balanced"
+    idle_minutes: float = 10
+    mlx_cache_mb: int = 64  # MLX keeps freed GPU buffers to reuse; uncapped it held ~850 MB
+
+    @property
+    def unload_after_s(self) -> float | None:
+        """Seconds asleep before unloading; None = never."""
+        if self.profile == "performance":
+            return None
+        return 0.0 if self.profile == "economy" else self.idle_minutes * 60
+
+    @property
+    def keep_alive(self) -> str:
+        """What Ollama is told: a safety net in case Jarvis ends without unloading it."""
+        if self.profile == "performance":
+            return "-1"
+        return f"{round(self.idle_minutes if self.profile == 'balanced' else 0) + 5}m"
 
 
 class ServerConfig(BaseModel):
@@ -207,6 +232,7 @@ class Settings(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
+    resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     hud: HudConfig = Field(default_factory=HudConfig)
 

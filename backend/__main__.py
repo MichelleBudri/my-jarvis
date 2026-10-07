@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     memory.add_argument("action", nargs="?", choices=["list", "forget", "clear"], default="list")
     memory.add_argument("id", nargs="?", type=int, help="the memory to forget (see `memory`)")
     sub.add_parser("prompt", help="print the current system prompt")
+    sub.add_parser("footprint", help="memory held by the running Jarvis and its model")
     bench = sub.add_parser("bench", help="compare LLM latency across models")
     bench.add_argument("models", nargs="*", help="Ollama models (default: the configured one)")
     bench_stt = sub.add_parser("bench-stt", help="compare Whisper models on one recorded phrase")
@@ -112,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         from backend.chat import run_briefing
 
         return _run(run_briefing(settings, speak=args.speak))
+    if args.command == "footprint":
+        from backend.footprint import run_footprint
+
+        return run_footprint(settings)
     if args.command == "hud-demo":
         from backend.hud.demo import run_demo
 

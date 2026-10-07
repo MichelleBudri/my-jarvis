@@ -92,9 +92,11 @@ def test_speaker_reports_what_it_plays_at_16k(monkeypatch):
     heard = []
     speaker.on_audio = heard.append
     audio_q = queue.Queue()
-    audio_q.put(np.zeros(22050, np.int16))  # 1 s
+    audio_q.put(("Olá.", np.zeros(22050, np.int16)))  # 1 s
     audio_q.put(None)
-    assert speaker._play(audio_q, None, None)
+    sentences = []
+    assert speaker._play(audio_q, None, None, lambda text, s: sentences.append((text, s)))
+    assert sentences == [("Olá.", 1.0)]  # for the HUD to write it in step with the voice
     assert sum(written) == 22050
     assert len(heard) == len(written)  # one reference block per block played
     assert abs(sum(len(h) for h in heard) - SAMPLE_RATE) <= len(heard)

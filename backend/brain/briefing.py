@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -36,13 +36,25 @@ REQUEST = {
     "are the most important artificial intelligence news items?",
 }
 HOW_TO_REPLY = {
-    "pt": "Resposta falada: no máximo {n} frases curtas de texto corrido com as uma ou duas "
-    "manchetes mais importantes sobre inteligência artificial, ignorando as que não forem "
-    "sobre inteligência artificial. Sem cumprimentar, sem falar do tempo e sem rótulos "
-    'como "Notícias:".',
-    "en": "Spoken reply: at most {n} short sentences of flowing text with the one or two "
-    "most important artificial intelligence headlines, skipping any that are not about "
-    'artificial intelligence. No greeting, no weather and no labels such as "News:".',
+    "pt": "Resposta falada, como um mordomo que conta as novidades do dia: no máximo {n} "
+    "frases curtas, em português natural do Brasil, com as uma ou duas manchetes mais "
+    "importantes sobre inteligência artificial. Comece com uma transição curta, como "
+    '"Nas notícias de inteligência artificial," ou "Sobre inteligência artificial,". Cada '
+    "manchete vira uma frase própria que diz quem fez o quê, como num telejornal. Traduza "
+    "as manchetes em inglês com naturalidade, sem deixar palavras em inglês, e use siglas "
+    "em português (FMI, ONU, UE). Escreva frases completas, com os artigos do português "
+    'falado ("aprovou uma moratória", "a bolha"), e "inteligência artificial" por extenso, '
+    'nunca "IA". '
+    "Nunca junte duas manchetes num mesmo fato nem acrescente o que a manchete não diz. "
+    "Ignore as que não forem sobre inteligência artificial. Sem cumprimentar, sem falar do "
+    'tempo, sem rótulos e sem fórmulas como "a senhora pode acompanhar" ou "vale destacar".',
+    "en": "Spoken reply, like a butler telling the day's news: at most {n} short sentences "
+    "with the one or two most important artificial intelligence headlines. Open with a "
+    'short transition such as "In artificial intelligence news,". Each headline becomes '
+    "its own sentence saying who did what, as a newsreader would. Never merge two "
+    "headlines into one fact or add anything the headline does not say. Skip any that are "
+    "not about artificial intelligence. No greeting, no weather, no labels and no stock "
+    'phrases such as "you may wish to follow".',
 }
 
 
@@ -83,9 +95,15 @@ async def fetch(
     conv: Conversation,
     weather: WeatherService | None,
     news: NewsService | None,
+    on_step: Callable[[str, str], None] | None = None,
 ) -> BriefingData:
-    """Both sources at once; one that fails or is slow is left out, never awaited past it."""
+    """Both sources at once; one that fails or is slow is left out, never awaited past it.
+
+    `on_step(source, status)` reports each one for the loading screen: running, then done,
+    failed or skipped.
+    """
     cfg = conv.s.briefing
+    report = on_step or (lambda name, status: None)
 
     async def get_weather() -> dict[str, Any] | None:
         if weather is None:
@@ -98,54 +116,134 @@ async def fetch(
         found = await news.headlines(count=cfg.headlines)
         return [{"title": i["title"], "source": i["source"]} for i in found["items"]] or None
 
-    async def guarded(name: str, coro) -> Any:
+    async def guarded(name: str, coro, source) -> Any:
+        if source is None:
+            coro.close()
+            report(name, "skipped")
+            return None
+        report(name, "running")
         try:
-            return await asyncio.wait_for(coro, cfg.fetch_timeout_s)
+            result = await asyncio.wait_for(coro, cfg.fetch_timeout_s)
+            report(name, "done" if result else "failed")
+            return result
         except (TimeoutError, ToolError) as exc:
             log.warning("Briefing without %s: %s", name, exc or "timed out")
         except Exception:  # noqa: BLE001 - the briefing never stops the app starting
             log.exception("Briefing without %s", name)
+        report(name, "failed")
         return None
 
-    w, n = await asyncio.gather(guarded("weather", get_weather()), guarded("news", get_news()))
+    w, n = await asyncio.gather(
+        guarded("weather", get_weather(), weather), guarded("news", get_news(), news)
+    )
     return BriefingData(weather=w, news=n)
 
 
-def weather_sentence(conv: Conversation, data: BriefingData) -> str:
-    """Today's weather from the numbers: instant, and never made up.
+# How the sky is right now, as the end of "It is 22 degrees ...": matched by keyword, so
+# "garoa forte" and "garoa" both read "e está garoando". First match wins.
+NOW_PHRASES = {
+    "pt": [
+        ("trovoada", "e há trovoadas"),
+        ("granizo", "e está caindo granizo"),
+        ("neve", "e está nevando"),
+        ("garoa", "e está garoando"),
+        ("pancadas", "e há pancadas de chuva"),
+        ("chuva", "e está chovendo"),
+        ("neblina", "com neblina"),
+        ("parcialmente nublado", "com algumas nuvens"),
+        ("nublado", "e o céu está encoberto"),
+        ("predominantemente limpo", "com poucas nuvens"),
+        ("céu limpo", "e o céu está limpo"),
+    ],
+    "en": [
+        ("thunder", "with thunderstorms"),
+        ("hail", "with hail"),
+        ("snow", "and snowing"),
+        ("drizzle", "and drizzling"),
+        ("shower", "with showers"),
+        ("rain", "and raining"),
+        ("fog", "and foggy"),
+        ("partly cloudy", "with a few clouds"),
+        ("overcast", "under a grey sky"),
+        ("mainly clear", "with hardly a cloud"),
+        ("clear", "under a clear sky"),
+    ],
+}
+RAIN_LIKELY = 70  # per cent: say to take an umbrella
+EVENING_HOUR = 18  # from then on today's low and high are history: left out
+
+
+def _sky_now(conditions: str | None, lang: str) -> str | None:
+    if not conditions:
+        return None
+    for key, phrase in NOW_PHRASES[lang]:
+        if key in conditions.lower():
+            return phrase
+    return f"com {conditions}" if lang == "pt" else f"with {conditions}"
+
+
+def _degrees(n: int, lang: str) -> str:
+    if lang == "pt":
+        return f"{n} grau" if abs(n) == 1 else f"{n} graus"
+    return f"{n} degree" if abs(n) == 1 else f"{n} degrees"
+
+
+def weather_sentence(conv: Conversation, data: BriefingData, now: datetime | None = None) -> str:
+    """Today's weather from the numbers: instant, and never made up (D-40).
 
     Asked to "cover only the news" when the weather had failed, qwen3:8b said "23 graus,
     mínima de 19" anyway; with data, it read "trovoada" as "a senhora está com nublado".
+    Written as a person would say it, not as a list: "Lá fora estão 22 graus e está
+    garoando", not "Agora faz 22 graus, garoa".
     """
     w = data.weather or {}
-    now, today = w.get("now") or {}, w.get("today") or {}
-    temp = now.get("temperature")
+    current, today = w.get("now") or {}, w.get("today") or {}
+    temp = current.get("temperature")
     if temp is None:
         return ""
-    pt = conv.s.locale.lang == "pt"
-    text = f"Agora faz {temp} graus" if pt else f"It is {temp} degrees"
-    if (feels := now.get("feels_like")) is not None and abs(feels - temp) >= 3:
-        text += f", com sensação de {feels}" if pt else f", feeling like {feels}"
-    if now.get("conditions"):
-        text += f", {now['conditions']}"
-    text += "."
+    lang = "pt" if conv.s.locale.lang == "pt" else "en"
+    pt = lang == "pt"
+    now = now or datetime.now(conv.s.location.tz)
+
+    if pt:
+        verb = "está" if abs(temp) == 1 else "estão"
+        text = f"Lá fora {verb} {_degrees(temp, lang)}"
+    else:
+        text = f"It's {_degrees(temp, lang)} out"
+    if sky := _sky_now(current.get("conditions"), lang):
+        text += f" {sky}"
+    if (feels := current.get("feels_like")) is not None and abs(feels - temp) >= 3:
+        text += f", com sensação de {feels}" if pt else f", though it feels like {feels}"
+    sentences = [f"{text}."]
+
     low, high = today.get("min"), today.get("max")
-    if low is None or high is None:
-        return text
-    later = []
-    if (cond := today.get("conditions")) and cond != now.get("conditions"):
-        later.append(f"previsão de {cond}" if pt else f"{cond} expected")
-    later += (
-        [f"mínima de {low}", f"máxima de {high}"]
-        if pt
-        else [f"a low of {low}", f"a high of {high}"]
-    )
-    if (rain := today.get("rain_chance_percent")) is not None and rain >= RAIN_WORTH_SAYING:
-        later.append(
-            f"{rain} por cento de chance de chuva" if pt else f"a {rain} per cent chance of rain"
+    later = today.get("conditions")
+    changes = later and later != current.get("conditions")
+    if now.hour < EVENING_HOUR and low is not None and high is not None:
+        if pt:
+            span = f"entre {low} e {_degrees(high, lang)}"
+            day = (
+                f"Ao longo do dia, a previsão é de {later}, com a temperatura {span}."
+                if changes
+                else f"Ao longo do dia, a temperatura fica {span}."
+            )
+        else:
+            span = f"between {low} and {_degrees(high, lang)}"
+            day = (
+                f"Later on, expect {later}, {span}." if changes else f"Today it should stay {span}."
+            )
+        sentences.append(day)
+
+    rain = today.get("rain_chance_percent")
+    if rain is not None and rain >= RAIN_LIKELY:
+        sentences.append("É bom ter o guarda-chuva à mão." if pt else "An umbrella would be wise.")
+    elif rain is not None and rain >= RAIN_WORTH_SAYING:
+        sentences.append(
+            f"Há {rain} por cento de chance de chuva."
+            if pt
+            else f"There is a {rain} per cent chance of rain."
         )
-    joined = f"{', '.join(later[:-1])} {conv.s.locale.and_word} {later[-1]}"
-    return f"{text} {'Hoje' if pt else 'Today'}, {joined}."
+    return " ".join(sentences)
 
 
 def build_messages(
@@ -204,7 +302,7 @@ async def stream(
     try:
         if greeting := build_greeting(conv.s, now):
             yield f"{greeting} "
-        if weather := weather_sentence(conv, data):
+        if weather := weather_sentence(conv, data, now):
             said.append(f"{weather} ")
             yield f"{weather} "
         if task:
@@ -217,3 +315,8 @@ async def stream(
         if text := "".join(said).strip():
             conv.add_assistant_note(text)
             conv.schedule_warm()  # the first question then finds the briefing cached
+
+
+async def compose(conv: Conversation, data: BriefingData, now: datetime | None = None) -> str:
+    """The whole briefing as one text, so it can be spoken without pauses (D-38)."""
+    return "".join([piece async for piece in stream(conv, data, now)]).strip()

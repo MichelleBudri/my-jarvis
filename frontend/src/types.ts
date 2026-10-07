@@ -57,7 +57,7 @@ export interface WeatherEvent {
 
 export interface NewsEvent {
   type: "news";
-  items: { title: string; source: string; hours_ago: number | null }[];
+  items: { title: string; source: string; hours_ago: number | null; link?: string }[];
 }
 
 export interface SystemEvent {
@@ -84,6 +84,34 @@ export interface StatsEvent {
   tools: string[];
 }
 
+export type BootStatus = "pending" | "running" | "done" | "skipped" | "offline" | "failed";
+
+export interface BootEvent {
+  type: "boot";
+  steps: { id: string; status: BootStatus }[];
+  progress: number;
+}
+
+export interface FootprintEvent {
+  type: "footprint";
+  jarvis_mb: number | null;
+  model_mb: number | null; // 0 = unloaded while Jarvis sleeps; null = Ollama unreachable
+  model: string | null;
+}
+
+export interface AutostartEvent {
+  type: "autostart";
+  enabled: boolean;
+  error?: string;
+}
+
+export interface ExportedEvent {
+  type: "exported";
+  path?: string;
+  name?: string;
+  error?: string;
+}
+
 export type HudEvent =
   | Hello
   | StateEvent
@@ -92,9 +120,13 @@ export type HudEvent =
   | NewsEvent
   | SystemEvent
   | StatsEvent
+  | AutostartEvent
+  | FootprintEvent
+  | BootEvent
+  | ExportedEvent
   | { type: "timers"; items: Timer[] }
   | { type: "transcript"; lines: TranscriptLine[] }
   | { type: "user"; text: string }
-  | { type: "reply"; delta: string }
-  | { type: "reply_end" }
+  | { type: "reply"; delta: string; duration_s?: number }
+  | { type: "reply_end"; cut?: boolean }
   | { type: "tool"; name: string };

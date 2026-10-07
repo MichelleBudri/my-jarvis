@@ -23,6 +23,24 @@ FAR_NOTE = (
     "city: name the place with its country in the reply."
 )
 
+# qwen3:8b read the result as something the user had: "A senhora está com garoa fraca,
+# temperatura de 24 graus, umidade de 70 por cento..." when asked about Santo André (D-41).
+HOW_TO_REPLY = {
+    "pt": (
+        "Fale do tempo como um fato sobre o lugar, dizendo o nome dele primeiro, por exemplo "
+        '"Em {place}, está garoando e faz 24 graus." Nunca como algo que a pessoa tem '
+        '("a senhora está com garoa"). Responda o que foi perguntado: condição e '
+        "temperatura, chuva só se for provável ou se perguntarem, umidade e vento só se "
+        "perguntarem."
+    ),
+    "en": (
+        'Describe the weather as a fact about the place, naming it first, e.g. "In {place}, '
+        "it's drizzling and 24 degrees.\" Never as something the user has. Answer what was "
+        "asked: conditions and temperature, rain only if likely or asked, humidity and wind "
+        "only if asked."
+    ),
+}
+
 CURRENT = (
     "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,"
     "weather_code,wind_speed_10m,is_day"
@@ -193,6 +211,9 @@ class WeatherService:
         except httpx.HTTPError as exc:
             raise ToolError(f"weather service unavailable: {exc}") from exc
         out = summarize(data, self.s, place)
+        lang = "pt" if self.s.locale.lang == "pt" else "en"
+        short = (place or "").split(",")[0].strip() or ("aqui" if lang == "pt" else "here")
+        out["how_to_reply"] = HOW_TO_REPLY[lang].format(place=short)
         if city and self._far_from_home(lat, lon):
             # "Santandre" (Santo André misheard) matched only a Romanian village: saying
             # the country lets the user catch it.

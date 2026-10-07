@@ -136,6 +136,38 @@ def uninstall(s: Settings, agents_dir: Path = AGENTS_DIR) -> int:
     return 0
 
 
+def enabled(agents_dir: Path = AGENTS_DIR) -> bool:
+    return plist_path(agents_dir).exists()
+
+
+def _parked(s: Settings) -> Path:
+    """Where a switched-off agent waits, so switching it on keeps its `voice` flags."""
+    return s.data_path / f"{LABEL}.plist"
+
+
+def set_enabled(s: Settings, on: bool, agents_dir: Path = AGENTS_DIR) -> bool:
+    """The HUD switch: takes effect at the next login and leaves this run alone.
+
+    No `bootout` or `bootstrap`: a Jarvis started by launchd would be ended by the first,
+    and a second one started (and refused by the lock) by the second. Returns the new state.
+    """
+    path, parked = plist_path(agents_dir), _parked(s)
+    if on and not path.exists():
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        if parked.exists():
+            parked.replace(path)
+        else:
+            if not app_bundle.executable(s).exists():
+                app_bundle.build(s)  # never rebuilt here: this process may be running it
+            plist = build_plist(s, [], str(app_bundle.executable(s)), app_bundle.python_env())
+            with path.open("wb") as f:
+                plistlib.dump(plist, f)
+    elif not on and path.exists():
+        parked.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(parked)
+    return path.exists()
+
+
 def run_autostart(s: Settings, action: str, voice_args: list[str]) -> int:
     if sys.platform != "darwin":
         console.print("[red]Launch at login uses launchd and only works on macOS[/]")

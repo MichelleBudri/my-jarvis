@@ -44,29 +44,57 @@ async def collect(stream) -> list[str]:
     return [t async for t in stream]
 
 
-def test_weather_sentence_from_the_numbers(tmp_path):
+MORNING = datetime(2026, 10, 7, 9, 0)
+
+
+def test_weather_sentence_sounds_spoken_not_like_a_list(tmp_path):
     conv = make_conv(tmp_path)
-    assert weather_sentence(conv, BriefingData(weather=WEATHER)) == (
-        "Agora faz 18 graus, nublado. Hoje, previsão de trovoada, mínima de 17, máxima de 26 "
-        "e 100 por cento de chance de chuva."
+    drizzle = {
+        "now": {"conditions": "garoa", "temperature": 22, "feels_like": 22},
+        "today": {"conditions": "garoa forte", "min": 16, "max": 26, "rain_chance_percent": 100},
+    }
+    assert weather_sentence(conv, BriefingData(weather=drizzle), MORNING) == (
+        "Lá fora estão 22 graus e está garoando. Ao longo do dia, a previsão é de garoa "
+        "forte, com a temperatura entre 16 e 26 graus. É bom ter o guarda-chuva à mão."
     )
     dry = {
         "now": {"conditions": "céu limpo", "temperature": 30, "feels_like": 34},
         "today": {"conditions": "céu limpo", "min": 20, "max": 31, "rain_chance_percent": 10},
     }
-    assert weather_sentence(conv, BriefingData(weather=dry)) == (
-        "Agora faz 30 graus, com sensação de 34, céu limpo. Hoje, mínima de 20 e máxima de 31."
+    assert weather_sentence(conv, BriefingData(weather=dry), MORNING) == (
+        "Lá fora estão 30 graus e o céu está limpo, com sensação de 34. Ao longo do dia, a "
+        "temperatura fica entre 20 e 31 graus."
     )
-    assert weather_sentence(conv, BriefingData()) == ""
+    maybe = {
+        "now": {"conditions": "parcialmente nublado", "temperature": 1},
+        "today": {"min": -2, "max": 8, "rain_chance_percent": 50},
+    }
+    assert weather_sentence(conv, BriefingData(weather=maybe), MORNING) == (
+        "Lá fora está 1 grau com algumas nuvens. Ao longo do dia, a temperatura fica entre "
+        "-2 e 8 graus. Há 50 por cento de chance de chuva."
+    )
+    assert weather_sentence(conv, BriefingData(), MORNING) == ""
+
+
+def test_weather_sentence_leaves_out_the_days_range_in_the_evening(tmp_path):
+    conv = make_conv(tmp_path)
+    assert weather_sentence(conv, BriefingData(weather=WEATHER), EVENING) == (
+        "Lá fora estão 18 graus e o céu está encoberto. É bom ter o guarda-chuva à mão."
+    )
 
 
 def test_weather_sentence_in_english(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_LANGUAGE", "en-GB")
     conv = make_conv(tmp_path)
     data = BriefingData(
-        weather={"now": {"temperature": 12}, "today": {"min": 8, "max": 14}},
+        weather={
+            "now": {"temperature": 12, "conditions": "light drizzle"},
+            "today": {"min": 8, "max": 14},
+        },
     )
-    assert weather_sentence(conv, data) == "It is 12 degrees. Today, a low of 8 and a high of 14."
+    assert weather_sentence(conv, data, MORNING) == (
+        "It's 12 degrees out and drizzling. Today it should stay between 8 and 14 degrees."
+    )
 
 
 class FakeWeather:
@@ -111,7 +139,7 @@ def test_stream_says_greeting_weather_then_the_model_news(tmp_path, owner_env):
     data = BriefingData(weather=WEATHER, news=NEWS)
     pieces = asyncio.run(collect(briefing.stream(conv, data, EVENING)))
     assert pieces[0] == "Boa noite, senhora. "
-    assert pieces[1].startswith("Agora faz 18 graus")
+    assert pieces[1].startswith("Lá fora estão 18 graus")
     assert pieces[2:] == ["A OpenAI lançou um modelo."]
 
     msgs = payloads[0]["messages"]
@@ -143,8 +171,8 @@ def test_stream_keeps_the_weather_when_the_model_fails(tmp_path, owner_env):
     conv = make_conv(tmp_path, handler)
     data = BriefingData(weather=WEATHER, news=NEWS)
     pieces = asyncio.run(collect(briefing.stream(conv, data, EVENING)))
-    assert len(pieces) == 2 and pieces[1].startswith("Agora faz")
-    assert conv.store.recent(conv.id, 10)[0]["content"].startswith("Agora faz")
+    assert len(pieces) == 2 and pieces[1].startswith("Lá fora")
+    assert conv.store.recent(conv.id, 10)[0]["content"].startswith("Lá fora")
 
 
 def test_weather_retries_once_on_a_server_error(owner_env):
@@ -185,3 +213,39 @@ def test_voice_loop_speaks_the_briefing_then_listens(tmp_path):
         assert h.state is State.LISTENING and h.loop.listen_deadline is not None
 
     asyncio.run(scenario())
+
+
+def test_fetch_reports_each_source_for_the_loading_screen(tmp_path):
+    conv = make_conv(tmp_path)
+    steps: list[tuple[str, str]] = []
+    weather = FakeWeather(error=ToolError("503"))
+    asyncio.run(briefing.fetch(conv, weather, FakeNews(), on_step=lambda *a: steps.append(a)))
+    assert ("weather", "running") in steps and ("weather", "failed") in steps
+    assert steps[-1] == ("news", "done") or ("news", "done") in steps
+    steps.clear()
+    asyncio.run(briefing.fetch(conv, None, FakeNews(), on_step=lambda *a: steps.append(a)))
+    assert ("weather", "skipped") in steps
+
+
+def test_compose_writes_the_whole_briefing_before_it_is_spoken(tmp_path):
+    conv = make_conv(tmp_path)
+    data = BriefingData(weather=WEATHER, news=NEWS)
+    text = asyncio.run(briefing.compose(conv, data, EVENING))
+    assert text.startswith("Boa noite") and text.endswith("A OpenAI lançou um modelo.")
+    assert "18 graus" in text
+
+
+def test_briefing_sentences_match_what_is_spoken_so_the_prepared_audio_is_used():
+    from backend.voice import _once, speak_tokens, speech_sentences
+
+    class Recorder:
+        said: list[str] = []
+
+        async def speak(self, sentences, on_start=None):
+            self.said = [x async for x in sentences]
+            return True
+
+    text = "Boa noite, senhora. Agora faz 18 graus, nublado. A OpenAI lançou um modelo novo."
+    rec = Recorder()
+    asyncio.run(speak_tokens(rec, _once(text), 20, "pt"))
+    assert rec.said == speech_sentences(text, 20, "pt") and len(rec.said) >= 2

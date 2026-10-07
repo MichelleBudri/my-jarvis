@@ -53,6 +53,28 @@ def test_install_builds_the_app_and_writes_the_agent(tmp_path, monkeypatch):
     assert not autostart.plist_path(tmp_path).exists() and removed
 
 
+def test_switch_writes_and_parks_the_agent_without_touching_launchd(tmp_path, monkeypatch):
+    s = Settings(data_dir=str(tmp_path / "data"))
+    agents = tmp_path / "agents"
+    built = []
+    monkeypatch.setattr(autostart, "_launchctl", lambda *a: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(app_bundle, "build", lambda s: built.append(s))
+    assert autostart.set_enabled(s, True, agents) is True
+    assert autostart.enabled(agents) and built  # the app was missing, so it was built
+    plist = plistlib.loads(autostart.plist_path(agents).read_bytes())
+    assert plist["ProgramArguments"][0] == str(app_bundle.executable(s))
+
+    # Flags given to `autostart install` survive switching off and on again.
+    plist["ProgramArguments"].append("--no-briefing")
+    autostart.plist_path(agents).write_bytes(plistlib.dumps(plist))
+    assert autostart.set_enabled(s, False, agents) is False
+    assert not autostart.enabled(agents)
+    assert autostart.set_enabled(s, False, agents) is False  # already off
+    assert autostart.set_enabled(s, True, agents) is True
+    args = plistlib.loads(autostart.plist_path(agents).read_bytes())["ProgramArguments"]
+    assert args[-1] == "--no-briefing"
+
+
 def test_app_bundle_is_named_after_the_assistant():
     s = Settings(assistant_name="Friday")
     info = app_bundle.info_plist(s)

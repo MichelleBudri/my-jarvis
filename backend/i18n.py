@@ -35,6 +35,11 @@ class Locale:
     timer_done: str = "Excuse me{addr}, your {duration} timer is up."
     timer_done_label: str = "Excuse me{addr}, your {duration} timer is up: {label}."
     one_moment: str = "One moment."  # while a slow tool runs
+    # Said by code when the person ends the conversation ("that's all, you can rest"):
+    # the model echoed it ("Pode descansar, senhora... Disponha") (D-43).
+    sign_off: str = "Very good{addr}. I shall be here."
+    sign_off_thanked: str = "You're welcome{addr}. I shall be here."
+    welcome: str = "You're welcome{addr}."  # a lone thank-you; the model added "Disponha"
 
     def format_datetime(self, now: datetime) -> str:
         wd, month = self.weekdays[now.weekday()], self.months[now.month - 1]
@@ -113,6 +118,9 @@ PT_BR = Locale(
     timer_done="Com licença{addr}, o timer de {duration} terminou.",
     timer_done_label="Com licença{addr}, o timer de {duration} terminou: {label}.",
     one_moment="Um momento.",
+    sign_off="Pois não{addr}. Estarei por aqui.",
+    sign_off_thanked="Por nada{addr}. Estarei por aqui.",
+    welcome="Por nada{addr}.",
 )
 
 EN = Locale(

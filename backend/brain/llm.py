@@ -79,6 +79,13 @@ class OllamaClient:
         )
         self._raise_for(resp)
 
+    async def unload(self) -> None:
+        """Free the model's memory in Ollama now, instead of after `keep_alive`."""
+        resp = await self._client.post(
+            "/api/chat", json={"model": self.cfg.model, "messages": [], "keep_alive": 0}
+        )
+        self._raise_for(resp)
+
     async def prime(
         self, system_prompt: str, tools: list | None = None, history: list[Message] | None = None
     ) -> None:

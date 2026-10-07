@@ -149,11 +149,15 @@ def test_without_wake_word_always_listens():
 class FakeSpeaker:
     def __init__(self):
         self.said: list[str] = []
+        self.on_sentence = None
+        self.interrupted = False
 
     async def speak(self, sentences, on_start=None):
         async for sentence in sentences:
             if on_start:
                 on_start()
+            if self.on_sentence:
+                self.on_sentence(sentence, 0.5)
             self.said.append(sentence)
         return True
 
@@ -179,6 +183,9 @@ class FakeConversation:
 
     def add_assistant_note(self, text):
         self.notes.append(text)
+
+    def add_exchange(self, user_text, answer):
+        self.notes.append((user_text, answer))
 
 
 def test_announcement_wakes_up_speaks_and_listens_for_follow_up():
@@ -214,7 +221,7 @@ def test_announcement_waits_while_the_user_speaks():
 
 def test_go_to_sleep_after_the_farewell():
     async def scenario():
-        h = Harness(text="Pode descansar.")
+        h = Harness(text="Preciso sair agora.")  # not a sign-off: the model calls the tool
         h.loop.speaker = FakeSpeaker()
         h.loop.conv = FakeConversation("Às suas ordens.", on_reply=h.loop.request_sleep)
         h.wake_model.wake_soon()
@@ -248,14 +255,85 @@ def test_sign_off_sleeps_even_if_the_model_skips_the_tool():
     async def scenario():
         h = Harness(text="Obrigada, pode descansar.")
         h.loop.speaker = FakeSpeaker()
-        h.loop.conv = FakeConversation("Por nada, senhora.")  # no go_to_sleep call
+        h.loop.conv = FakeConversation("Pode descansar, senhora. Disponha.")  # never asked
         h.wake_model.wake_soon()
         await h.frames(3)
         await h.frames(20, prob=0.9)
         await h.frames(30)
         await h.loop.task
         await asyncio.sleep(0)
-        assert h.loop.speaker.said == ["Por nada, senhora."]
+        # Answered by code: thanked, so "Por nada"; no echo of the sign-off.
+        assert h.loop.speaker.said == ["Por nada. Estarei por aqui."]
+        assert h.loop.conv.notes == [("Obrigada, pode descansar.", "Por nada. Estarei por aqui.")]
         assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
 
     asyncio.run(scenario())
+
+
+def test_sign_off_without_thanks_gets_no_por_nada():
+    async def scenario():
+        h = Harness(text="Então, está bom. Pode descansar.")
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation("unused")
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.loop.speaker.said == ["Pois não. Estarei por aqui."]
+        assert h.state is State.SLEEPING
+
+    asyncio.run(scenario())
+
+
+def test_hud_gets_each_sentence_as_it_is_spoken_then_where_it_ended():
+    from backend.hud.bus import HudBus
+    from backend.voice import end_reply, write_as_spoken
+
+    bus = HudBus()
+    got = []
+    bus.publish = got.append
+    speaker = FakeSpeaker()
+    speaker.on_sentence = write_as_spoken(bus)
+
+    async def sentences():
+        yield "Bom dia."
+        yield "Lá fora estão 22 graus."
+
+    asyncio.run(speaker.speak(sentences()))
+    end_reply(bus, speaker)
+    assert got == [
+        {"type": "reply", "delta": "Bom dia. ", "duration_s": 0.5},
+        {"type": "reply", "delta": "Lá fora estão 22 graus. ", "duration_s": 0.5},
+        {"type": "reply_end", "cut": False},
+    ]
+    speaker.interrupted = True
+    end_reply(bus, speaker)
+    assert got[-1] == {"type": "reply_end", "cut": True}
+
+
+def test_a_lone_thank_you_gets_por_nada_by_code_and_keeps_listening():
+    async def scenario():
+        h = Harness(text="Muito obrigada, Jarvis.")
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation("Por nada, senhora. Disponha.")
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
+        assert h.loop.speaker.said == ["Por nada."]
+        assert h.state is State.LISTENING  # a thank-you is not a goodbye
+
+    asyncio.run(scenario())
+
+
+def test_only_thanks_needs_the_whole_utterance():
+    from backend.audio.stt import only_thanks, thanks
+
+    assert only_thanks("Obrigada, Jarvis.") and only_thanks("Valeu!")
+    assert not only_thanks("Obrigada, e que horas são?")
+    assert not only_thanks("Obrigada pela ajuda com o timer")
+    assert thanks("Muito obrigado, pode descansar") and not thanks("Pode descansar.")

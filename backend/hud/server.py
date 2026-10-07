@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 DIST_DIR = ROOT_DIR / "frontend" / "dist"
 DEV_PORT = 5173  # `npm run dev` (Vite)
 COMMANDS = {"wake", "sleep"}
+# Requests answered by handlers registered on the bus, and the type of their value.
+REQUESTS: dict[str, type] = {"autostart": bool, "export": type(None)}
 RECONNECT_S = 1.5  # an already open HUD page reconnects within this; then no new tab
 
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Jarvis HUD</title>
@@ -65,8 +67,13 @@ def create_app(bus: HudBus, origins: set[str], dist: Path = DIST_DIR) -> FastAPI
                     msg = json.loads(await ws.receive_text())
                 except (ValueError, TypeError):
                     continue
-                if isinstance(msg, dict) and msg.get("type") in COMMANDS:
-                    bus.command(msg["type"])
+                if not isinstance(msg, dict):
+                    continue
+                kind = msg.get("type")
+                if kind in COMMANDS:
+                    bus.command(kind)
+                elif kind in REQUESTS and isinstance(msg.get("value"), REQUESTS[kind]):
+                    bus.request(kind, msg.get("value"))
 
         tasks = [asyncio.create_task(send()), asyncio.create_task(receive())]
         try:

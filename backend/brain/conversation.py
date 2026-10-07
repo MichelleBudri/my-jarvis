@@ -112,6 +112,16 @@ class Conversation:
         if self.warm_after_turn:
             self._warm_task = asyncio.create_task(self.warm())
 
+    async def settle(self) -> None:
+        """Wait for a cache warm-up in flight, so an unload does not race it."""
+        if self._warm_task and not self._warm_task.done():
+            await asyncio.wait([self._warm_task])
+
+    def add_exchange(self, user_text: str, answer: str) -> None:
+        """A turn answered by code, not the model (a sign-off), kept for the history."""
+        self.store.add(self.id, "user", user_text)
+        self.store.add(self.id, "assistant", answer)
+
     def add_assistant_note(self, text: str) -> None:
         """Something said unprompted (a timer going off), so follow-ups have context."""
         self.store.add(self.id, "assistant", text)

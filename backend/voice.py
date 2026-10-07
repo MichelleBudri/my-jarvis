@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
+import logging
 import time
 from collections.abc import AsyncIterator, Callable
 
@@ -13,7 +15,7 @@ from rich.console import Console
 from backend.audio import earcon
 from backend.audio.level import level
 from backend.audio.sentences import SentenceSplitter, clean_for_speech
-from backend.audio.stt import is_farewell, is_sign_off, is_wake_phrase
+from backend.audio.stt import is_farewell, is_sign_off, is_wake_phrase, only_thanks, thanks
 from backend.audio.tts import PiperSpeaker, SaySpeaker, Speaker
 from backend.audio.wakeword import WakeWordDetector
 from backend.brain.conversation import Conversation
@@ -21,12 +23,14 @@ from backend.brain.llm import LLMError, OllamaClient
 from backend.config import Settings
 from backend.hud import HudBus
 from backend.memory.store import MemoryStore
+from backend.resources import Resources
 from backend.state import State, StateMachine
 from backend.tools import Tool, build_registry
 from backend.tools.geocode import resolve_location
 from backend.tools.timers import TimerManager
 
 console = Console(highlight=False)
+log = logging.getLogger(__name__)
 
 
 def echo(text: str) -> None:
@@ -35,23 +39,40 @@ def echo(text: str) -> None:
     console.print(text, end="", markup=False, soft_wrap=True)
 
 
+FOOTPRINT_SETTLE_S = 2  # after an unload or reload, before measuring it for the HUD
 ECHO_TAIL_S = 0.4  # ignore the mic briefly after speaking so the room echo dies down
 
 
-def show_tokens(bus: HudBus) -> Callable[[str], None]:
-    """Reply text to the terminal and the HUD."""
+def write_as_spoken(bus: HudBus) -> Callable[[str, float], None]:
+    """A speaker's `on_sentence`: the HUD writes each sentence while it is heard, not as
+    the model generates it (much faster than speech) (D-42)."""
 
-    def on_token(text: str) -> None:
-        echo(text)
-        bus.publish({"type": "reply", "delta": text})
+    def on_sentence(text: str, seconds: float) -> None:
+        bus.publish({"type": "reply", "delta": f"{text} ", "duration_s": round(seconds, 2)})
 
-    return on_token
+    return on_sentence
+
+
+def end_reply(bus: HudBus, speaker: Speaker) -> None:
+    """Interrupted, the HUD stops writing where the voice stopped; else it writes the rest."""
+    bus.publish({"type": "reply_end", "cut": bool(getattr(speaker, "interrupted", False))})
 
 
 def make_speaker(s: Settings) -> Speaker:
     if s.tts.engine == "say":
         return SaySpeaker(s.tts.say_voice)
     return PiperSpeaker(s.voice_path, s.audio.output_device, s.tts.length_scale)
+
+
+def speech_sentences(text: str, min_chars: int, lang: str) -> list[str]:
+    """The sentences `speak_tokens` makes of `text` arriving at once, to synthesize ahead."""
+    splitter = SentenceSplitter(min_chars)
+    pieces = [*splitter.feed(text), splitter.flush()]
+    return [spoken for p in pieces if p and (spoken := clean_for_speech(p, lang))]
+
+
+async def _once(text: str) -> AsyncIterator[str]:
+    yield text
 
 
 async def speak_tokens(
@@ -117,11 +138,11 @@ async def speak_briefing(
             tokens,
             s.tts.sentence_min_chars,
             s.locale.lang,
-            on_token=show_tokens(bus),
+            on_token=echo,
             on_start=on_start,
         )
     finally:
-        bus.publish({"type": "reply_end"})
+        end_reply(bus, speaker)
     details = [f"{name} {at:.2f}s" for name, at in timings.items()]
     if first_audio is not None:
         details.insert(0, f"voice {first_audio - started_at:.2f}s after start")
@@ -146,6 +167,60 @@ def sleep_tool(request_sleep: Callable[[], None]) -> Tool:
             "en": "go back to sleep when the conversation is over",
         },
     )
+
+
+def autostart_switch(s: Settings, bus: HudBus) -> None:
+    """The HUD's "launch at login" switch: show its state and flip it on request."""
+    import sys
+
+    from backend import autostart
+
+    if sys.platform != "darwin":
+        return
+    bus.publish({"type": "autostart", "enabled": autostart.enabled()})
+    tasks: set[asyncio.Task] = set()
+
+    async def flip(on: bool) -> None:
+        try:
+            now = await asyncio.to_thread(autostart.set_enabled, s, on)
+            bus.publish({"type": "autostart", "enabled": now})
+            console.print(f"\n[dim]Launch at login {'on' if now else 'off'} (from the HUD)[/]")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Launch at login not changed")
+            bus.publish({"type": "autostart", "enabled": autostart.enabled(), "error": str(exc)})
+
+    def on_request(value) -> None:
+        task = asyncio.create_task(flip(bool(value)))
+        tasks.add(task)  # a reference, or the task may be collected mid-way
+        task.add_done_callback(tasks.discard)
+
+    bus.handle("autostart", on_request)
+
+
+def export_button(s: Settings, bus: HudBus, store: MemoryStore, conv: Conversation) -> None:
+    """The HUD's "export" button: the conversation as Markdown in Downloads, shown in Finder."""
+    from backend.memory.export import export_conversation
+
+    tasks: set[asyncio.Task] = set()
+
+    async def export() -> None:
+        try:
+            path = await asyncio.to_thread(export_conversation, s, store, conv.id)
+        except OSError as exc:
+            log.exception("Conversation not exported")
+            bus.publish({"type": "exported", "error": str(exc)})
+            return
+        console.print(f"\n[dim]Conversation exported: {path}[/]")
+        bus.publish({"type": "exported", "path": str(path), "name": path.name})
+        with contextlib.suppress(OSError):
+            await asyncio.create_subprocess_exec("open", "-R", str(path))
+
+    def on_request(_) -> None:
+        task = asyncio.create_task(export())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    bus.handle("export", on_request)
 
 
 def tools_detail(st) -> str | None:
@@ -260,14 +335,15 @@ class VoiceLoop:
         for text in texts:
             console.print(f"\n[bold cyan]{self.s.assistant_name} ›[/] {text}")
             self.conv.add_assistant_note(text)
-            self.bus.publish({"type": "reply", "delta": f"{text} "})
-        self.bus.publish({"type": "reply_end"})
 
         async def sentences() -> AsyncIterator[str]:
             for text in texts:
                 yield text
 
-        await self.speaker.speak(sentences())
+        try:
+            await self.speaker.speak(sentences())
+        finally:
+            end_reply(self.bus, self.speaker)
 
     def brief(self, task: asyncio.Task) -> None:
         """Take the activation briefing, started before the loop existed, as the current turn."""
@@ -323,6 +399,29 @@ class VoiceLoop:
             self.task = asyncio.create_task(self.handle(event.utterance, time.perf_counter()))
             self.task.add_done_callback(self._after_turn)
 
+    async def _say_by_code(self, user_text: str, signing_off: bool) -> None:
+        """Fixed lines for a sign-off or a lone thank-you: the model echoed the sign-off
+        ("Pode descansar, senhora") and said "Por nada, senhora. Disponha." (D-43)."""
+        s = self.s
+        addr = f", {s.owner_address}" if s.owner_address else ""
+        if not signing_off:
+            line = s.locale.welcome
+        else:
+            line = s.locale.sign_off_thanked if thanks(user_text) else s.locale.sign_off
+        text = line.format(addr=addr)
+        echo(text)
+        self.conv.add_exchange(user_text, text)
+
+        def on_start() -> None:
+            if self.state.state is State.THINKING:
+                self.state.to(State.SPEAKING)
+
+        try:
+            await self.speaker.speak(_once(text), on_start=on_start)
+        finally:
+            end_reply(self.bus, self.speaker)
+        console.print()
+
     async def handle(self, audio: np.ndarray, speech_end: float) -> None:
         s = self.s
         t0 = time.perf_counter()
@@ -342,13 +441,17 @@ class VoiceLoop:
             reason = f'ignored "{raw}"' if raw.strip() else "no speech recognized"
             console.print(f"[dim]({reason} · stt {stt_s:.2f}s)[/]")
             return
-        if is_sign_off(text, s.assistant_name):
+        signing_off = is_sign_off(text, s.assistant_name)
+        if signing_off:
             # Decided here, not by the model: qwen3 often replied "I'll rest now" without
-            # calling go_to_sleep. The model still says the farewell; we sleep after it.
+            # calling go_to_sleep. We sleep after the farewell.
             self.request_sleep()
         console.print(f"\n[bold]{s.locale.you_label} ›[/] {text}")
         console.print(f"[bold cyan]{s.assistant_name} ›[/] ", end="")
         self.bus.publish({"type": "user", "text": text})
+        if s.locale.native_prompt and (signing_off or only_thanks(text, s.assistant_name)):
+            await self._say_by_code(text, signing_off)
+            return
 
         first_audio: float | None = None
 
@@ -364,14 +467,14 @@ class VoiceLoop:
                 self.speaker,
                 text,
                 s.tts.sentence_min_chars,
-                on_token=show_tokens(self.bus),
+                on_token=echo,
                 on_start=on_start,
             )
         except LLMError as exc:
             console.print(f"\n[red]Model error: {exc}[/]")
             return
         finally:
-            self.bus.publish({"type": "reply_end"})
+            end_reply(self.bus, self.speaker)
         st = self.conv.last_stats
         details = [f"stt {stt_s:.2f}s"]
         if st.first_token_s is not None:
@@ -432,8 +535,9 @@ async def _run_voice(
     from backend.audio.stt import WhisperSTT
     from backend.audio.vad import SileroVAD, UtteranceSegmenter
     from backend.audio.wakeword import load_wake_model
+    from backend.boot import BootProgress, wait_for_internet
     from backend.brain import briefing as brief
-    from backend.hud.feeds import start_feeds
+    from backend.hud.feeds import footprint_panel, start_feeds
     from backend.hud.server import HudServer, open_hud
     from backend.tools.news import NewsService
     from backend.tools.weather import WeatherService
@@ -445,6 +549,7 @@ async def _run_voice(
 
     bus = HudBus()
     bus.publish({"type": "state", "state": "booting"})
+    autostart_switch(s, bus)
     server = HudServer(s, bus) if use_hud else None
     if server and not await server.start():
         server = None
@@ -459,7 +564,15 @@ async def _run_voice(
     else:
         background = []
 
-    llm = OllamaClient(s.llm)
+    steps = ["ollama", "location", "voice", "whisper", "wake", "model"]
+    if use_briefing:
+        steps[2:2] = ["internet", "weather", "news"]
+        steps += ["briefing", "speech"]
+    boot = BootProgress(bus, steps)
+
+    # The profile decides how long Ollama keeps the model (D-37).
+    llm = OllamaClient(s.llm.model_copy(update={"keep_alive": s.resources.keep_alive}))
+    boot.start("ollama")
     if at_login and not await llm.wait_ready(0):
         console.print("[dim]Waiting for Ollama to start...[/]")
         if not await llm.wait_ready(OLLAMA_WAIT_AT_LOGIN_S):
@@ -472,7 +585,9 @@ async def _run_voice(
                 await server.stop()
             await llm.aclose()
             return 1
-    await resolve_location(s)
+    boot.done("ollama")
+    # Before the model: the system prompt names the place (cached after the first run).
+    await boot.track("location", resolve_location(s))
     store = MemoryStore(s.db_path)
     # The callbacks reach `loop`, created below, only after startup.
     timers = TimerManager(
@@ -488,8 +603,10 @@ async def _run_voice(
     conv_id = store.last_conversation() if resume else None
     conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
     conv.on_tool = lambda name: bus.publish({"type": "tool", "name": name})
-    stt = WhisperSTT(s.stt.model, s.stt_language, s.stt_hint)
+    export_button(s, bus, store, conv)
+    stt = WhisperSTT(s.stt.model, s.stt_language, s.stt_hint, s.resources.mlx_cache_mb)
     speaker = make_speaker(s)
+    speaker.on_sentence = write_as_spoken(bus)
     if isinstance(speaker, PiperSpeaker):
         speaker.on_level = lambda v: bus.publish({"type": "level", "out": v})
     aec = None
@@ -530,7 +647,7 @@ async def _run_voice(
     timings: dict[str, float] = {}  # when each part was ready, since start
 
     async def ready(name: str, work):
-        result = await work
+        result = await boot.track(name, work)
         timings[name] = time.perf_counter() - started_at
         return result
 
@@ -541,35 +658,41 @@ async def _run_voice(
             load_wake_model(s.wakeword_path, s.wakeword_dir), s.wakeword.threshold
         )
 
-    # The briefing needs only the voice and its data: it starts while the language
-    # model, Whisper and the wake word are still loading, and the model's part waits
-    # for them inside Ollama.
-    fetching: asyncio.Task | None = None
-    if use_briefing:
-        fetching = asyncio.create_task(ready("data", brief.fetch(conv, weather, news)))
+    async def gather_data() -> brief.BriefingData:
+        """Weather and news, after waiting for the network (Wi-Fi joins late at login)."""
+        boot.start("internet")
+        if not await wait_for_internet(s.briefing.network_wait_s):
+            for name in ("internet", "weather", "news"):
+                boot.set(name, "offline")
+            return brief.BriefingData()
+        boot.done("internet")
+        data = await brief.fetch(conv, weather, news, on_step=boot.set)
+        timings["data"] = time.perf_counter() - started_at
+        return data
+
+    # Everything loads at once behind the loading screen; the briefing is then written
+    # and synthesized in full, so at 100% it is spoken without a pause (D-38).
+    fetching = asyncio.create_task(gather_data()) if use_briefing else None
     loading = asyncio.gather(
+        ready("voice", speaker.warmup()),
         ready("model", conv.prime()),
         ready("whisper", stt.warmup()),
-        ready("wake word", asyncio.to_thread(load_wake)),
+        ready("wake", asyncio.to_thread(load_wake)),
     )
     speaking: asyncio.Task | None = None
+    briefing_text = ""
     try:
-        await ready("voice", speaker.warmup())
-        if use_briefing:
-            tokens = brief.stream(conv, await fetching)
-            speaking = asyncio.create_task(
-                speak_briefing(s, speaker, tokens, started_at, timings, bus)
-            )
-            _, _, wake = await loading
-        else:
-            with console.status("Loading language model, Whisper and voice..."):
-                _, _, wake = await loading
+        with console.status("Loading language model, Whisper and voice..."):
+            _, _, _, wake = await loading
+            if fetching:
+                data = await fetching
+                briefing_text = await ready("briefing", brief.compose(conv, data))
+                sentences = speech_sentences(briefing_text, s.tts.sentence_min_chars, s.locale.lang)
+                await ready("speech", speaker.prepare(sentences))
     except Exception as exc:  # noqa: BLE001
-        for task in (fetching, speaking, loading, *background):
+        for task in (fetching, loading, *background):
             if task:
                 task.cancel()
-        if speaking:
-            speaker.interrupt()
         console.print(f"\n[red]Startup failed: {exc}[/]")
         console.print("Run [bold]uv run python -m backend doctor[/] to diagnose.")
         if window:
@@ -581,6 +704,11 @@ async def _run_voice(
         if aec:
             aec.close()
         return 1
+    boot.finish()
+    if briefing_text:
+        speaking = asyncio.create_task(
+            speak_briefing(s, speaker, _once(briefing_text), started_at, timings, bus)
+        )
 
     chime = None
     if s.wakeword.chime:
@@ -597,6 +725,20 @@ async def _run_voice(
         chime=chime,
         bus=bus,
     )
+
+    async def show_footprint() -> None:
+        await asyncio.sleep(FOOTPRINT_SETTLE_S)
+        with contextlib.suppress(Exception):
+            bus.publish(await footprint_panel(s))
+
+    def on_resources(_: bool) -> None:
+        if server:
+            background.append(asyncio.create_task(show_footprint()))
+
+    resources = Resources(s, conv, stt, on_change=on_resources)
+    loop.state.add_listener(resources.on_state)
+    if loop.state.state is State.SLEEPING:
+        resources.on_state(None, State.SLEEPING)
     if speaking:
         loop.brief(speaking)
     if server:
@@ -617,6 +759,7 @@ async def _run_voice(
     finally:
         mic.stop()
         timers.cancel_all()
+        resources.close()
         if loop.busy:
             speaker.interrupt()
             loop.task.cancel()

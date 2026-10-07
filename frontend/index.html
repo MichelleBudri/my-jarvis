@@ -58,7 +58,13 @@
         </div>
       </main>
 
-      <section class="transcript" id="transcript" aria-live="polite"></section>
+      <section class="talk">
+        <div class="talk-tools">
+          <span id="talk-note" class="talk-note" role="status"></span>
+          <button id="export" class="tool-button" type="button"></button>
+        </div>
+        <div class="transcript" id="transcript" aria-live="polite"></div>
+      </section>
 
       <aside class="col right">
         <section class="panel" id="system">
@@ -76,9 +82,25 @@
         </section>
       </aside>
 
+      <section class="boot" id="boot" aria-live="polite" hidden>
+        <div class="boot-box">
+          <div class="boot-title" id="boot-title"></div>
+          <div class="boot-percent"><span id="boot-percent">0</span><sup>%</sup></div>
+          <div class="boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <i id="boot-fill"></i>
+          </div>
+          <ul class="boot-steps" id="boot-steps"></ul>
+        </div>
+      </section>
+
       <footer class="bottom">
         <span id="footer"></span>
-        <span id="owner" class="dim"></span>
+        <span class="bottom-right">
+          <button id="autostart" class="switch" type="button" role="switch" aria-checked="false" hidden>
+            <span class="knob" aria-hidden="true"></span><span id="autostart-label"></span>
+          </button>
+          <span id="owner" class="dim"></span>
+        </span>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

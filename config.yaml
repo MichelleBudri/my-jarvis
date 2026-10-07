@@ -25,7 +25,7 @@ location:
 llm:
   host: http://localhost:11434
   model: qwen3:8b          # compare others with `python -m backend bench`
-  keep_alive: 30m           # keep the model loaded to cut latency
+  keep_alive: 30m           # chat and briefing commands; `voice` follows resources.profile
   temperature: 0.6
   think: false              # thinking mode adds seconds of latency
   context_messages: 30      # tool calls and short results count too (~4 per tool turn)
@@ -77,6 +77,13 @@ briefing:
   enabled: true             # weather and AI news on start; `voice --no-briefing` skips it
   headlines: 6              # candidates the model picks the one or two most relevant from
   fetch_timeout_s: 5        # a source slower than this is left out
+  network_wait_s: 20        # how long the loading screen waits for the internet
+
+resources:
+  profile: balanced         # performance: always loaded · balanced: unload after idle_minutes asleep
+                            # · economy: unload on going to sleep. Reloading costs ~15 s on waking
+  idle_minutes: 10
+  mlx_cache_mb: 64          # cap on Whisper's reusable GPU buffers (uncapped: ~850 MB more)
 
 server:
   host: 127.0.0.1           # the HUD: http://127.0.0.1:8765

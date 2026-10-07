@@ -104,6 +104,16 @@ class MemoryStore:
             messages.pop(0)
         return messages
 
+    def transcript(self, conversation_id: int) -> list[dict[str, str]]:
+        """What was said, in order: questions and spoken answers, without tool traffic."""
+        rows = self.db.execute(
+            "SELECT role, content, created_at FROM messages WHERE conversation_id = ? "
+            "AND role IN ('user', 'assistant') AND tool_calls IS NULL AND content != '' "
+            "ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # Long-term memory: facts kept across conversations ("remember that...")
 
     def add_fact(self, content: str) -> tuple[int, bool]:

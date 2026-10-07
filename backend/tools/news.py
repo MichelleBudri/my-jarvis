@@ -79,6 +79,11 @@ def _date(value: str) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
+def is_web_link(url: str) -> bool:
+    """Only http(s) links reach the HUD: a feed could carry `javascript:` or `file:`."""
+    return urlparse(url).scheme in ("http", "https") and bool(urlparse(url).netloc)
+
+
 def _site_name(channel_title: str, url: str) -> str:
     # "AI News & Artificial Intelligence | TechCrunch" → "TechCrunch"
     name = re.split(r"\s+[|–-]\s+", channel_title)[-1].strip() if channel_title else ""
@@ -191,7 +196,11 @@ class NewsService:
         self._cache = (time.monotonic(), merged)
         return merged
 
-    async def headlines(self, topic: str | None = None, count: int | None = None) -> dict:
+    async def headlines(
+        self, topic: str | None = None, count: int | None = None, links: bool = False
+    ) -> dict:
+        """`links`: for the HUD, which opens them. Never for the model: tokens it does not
+        need, and it would read them out."""
         count = max(1, min(10, int(count or self.s.news.max_items)))
         items = await self.items()
         if topic:
@@ -207,6 +216,7 @@ class NewsService:
                     "source": i.source,
                     "hours_ago": i.hours_ago(now),
                     **({"summary": i.summary} if i.summary else {}),
+                    **({"link": i.link} if links and is_web_link(i.link) else {}),
                 }
                 for i in items[:count]
             ],

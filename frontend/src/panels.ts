@@ -1,8 +1,10 @@
 // Side panels and the transcript. Everything from the backend goes in as text, never
 // as HTML: news titles come from the internet.
 
+import { copyText } from "./clipboard";
 import { fill, type Strings } from "./i18n";
 import type {
+  FootprintEvent,
   NewsEvent,
   StatsEvent,
   SystemEvent,
@@ -13,6 +15,13 @@ import type {
 
 const SPARK_POINTS = 16;
 const SHOWN_LINES = 4;
+// A sentence is typed over this share of its spoken length, so the text never trails
+// the voice (Piper's audio ends with a short silence).
+const WRITE_SHARE = 0.9;
+const TYPE_TICK_MS = 30; // how often typed characters are added
+// Typing time of a character, in letters: the voice pauses after commas and full stops,
+// and so does the typing.
+const PAUSE_AFTER: Record<string, number> = { ",": 4, ";": 4, ":": 4, ".": 7, "!": 7, "?": 7 };
 
 function $(id: string): HTMLElement {
   const node = document.getElementById(id);
@@ -27,6 +36,8 @@ function el(tag: string, className = "", text = ""): HTMLElement {
   return node;
 }
 
+const gb = (mb: number) => (mb < 1024 ? `${Math.round(mb)} MB` : `${(mb / 1024).toFixed(1)} GB`);
+
 const dash = (v: number | null | undefined, unit = "") => (v == null ? "--" : `${v}${unit}`);
 
 function meter(label: string, percent: number | null, text: string, warn = false): HTMLElement {
@@ -40,6 +51,28 @@ function meter(label: string, percent: number | null, text: string, warn = false
   return row;
 }
 
+type OpenUrl = { api?: { open_url?: (url: string) => Promise<boolean> } };
+
+/** A headline that opens its article: in the default browser from the native window
+ * (it would otherwise load inside the HUD), in a new tab from a browser. */
+function newsLink(title: string, url: string, hint: string): HTMLElement {
+  const safe = /^https?:\/\//i.test(url) ? url : null;
+  if (!safe) return el("div", "title", title);
+  const a = el("a", "title link", title) as HTMLAnchorElement;
+  a.href = safe;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = hint;
+  a.addEventListener("click", (e) => {
+    const native = (window as unknown as { pywebview?: OpenUrl }).pywebview?.api;
+    if (native?.open_url) {
+      e.preventDefault();
+      void native.open_url(safe);
+    }
+  });
+  return a;
+}
+
 function clock(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const h = Math.floor(s / 3600);
@@ -51,8 +84,15 @@ function clock(ms: number): string {
 export class Panels {
   private t: Strings;
   private timers: Timer[] = [];
+  private lastSystem: SystemEvent | null = null;
+  private lastFootprint: FootprintEvent | null = null;
   private voiceTimes: number[] = [];
   private lines: TranscriptLine[] = [];
+  // Spoken sentences waiting to be typed, and the one being typed.
+  private queue: { text: string; ms: number }[] = [];
+  private typing: { text: string; ms: number; at: number[]; shown: number; start: number } | null =
+    null;
+  private writeTimer = 0;
   private lastStats: StatsEvent | null = null;
 
   constructor(t: Strings) {
@@ -60,6 +100,7 @@ export class Panels {
     setInterval(() => this.tickTimers(), 250);
     this.renderTimers();
     this.renderStats();
+    this.renderSystem();
   }
 
   setStrings(t: Strings): void {
@@ -124,13 +165,28 @@ export class Panels {
               : fill(this.t.hoursAgo, { n: item.hours_ago });
         const meta = el("div", "meta");
         meta.append(el("span", "", item.source), el("span", "", when));
-        row.append(el("div", "title", item.title), meta);
+        const title = item.link
+          ? newsLink(item.title, item.link, this.t.openNews)
+          : el("div", "title", item.title);
+        row.append(title, meta);
         return row;
       }),
     );
   }
 
   system(s: SystemEvent): void {
+    this.lastSystem = s;
+    this.renderSystem();
+  }
+
+  footprint(f: FootprintEvent): void {
+    this.lastFootprint = f;
+    this.renderSystem();
+  }
+
+  private renderSystem(): void {
+    const s = this.lastSystem;
+    if (!s) return;
     const t = this.t;
     const rows: HTMLElement[] = [];
     if (s.battery) {
@@ -144,6 +200,16 @@ export class Panels {
       ? `${dash(s.memory_percent, "%")} · ${s.memory_total_gb} GB`
       : dash(s.memory_percent, "%");
     rows.push(meter(t.memory, s.memory_percent, memText, (s.memory_percent ?? 0) > 85));
+    const f = this.lastFootprint;
+    const totalMb = (s.memory_total_gb ?? 0) * 1024;
+    const share = (mb: number | null) => (mb && totalMb ? (mb / totalMb) * 100 : null);
+    if (f?.jarvis_mb != null) {
+      rows.push(meter(t.jarvisMemory, share(f.jarvis_mb), gb(f.jarvis_mb)));
+    }
+    if (f?.model_mb != null) {
+      const text = f.model_mb === 0 ? t.modelResting : gb(f.model_mb);
+      rows.push(meter(t.modelMemory, share(f.model_mb), text));
+    }
     $("meters").replaceChildren(...rows);
   }
 
@@ -221,31 +287,114 @@ export class Panels {
   }
 
   setTranscript(lines: TranscriptLine[]): void {
+    this.stopWriting();
     this.lines = lines.map((l) => ({ ...l }));
     this.renderTranscript();
   }
 
   user(text: string): void {
+    this.flushWords();
     this.closeReply();
     this.lines.push({ role: "user", text, open: false });
     this.renderTranscript();
   }
 
-  reply(delta: string): void {
+  /** Reply text. With `durationS` (a sentence as the voice starts it), it is typed
+   * letter by letter over the time it takes to say; without it, at once. */
+  reply(delta: string, durationS?: number): void {
+    if (!durationS) {
+      this.append(delta);
+      return;
+    }
+    this.queue.push({ text: delta, ms: durationS * 1000 * WRITE_SHARE });
+    if (!this.writeTimer) this.typeNext();
+  }
+
+  /** `cut`: the voice was interrupted, so what was not yet heard is dropped. */
+  replyEnd(cut = false): void {
+    if (cut) this.stopWriting();
+    else this.flushWords();
+    this.closeReply();
+    this.renderTranscript();
+  }
+
+  private append(delta: string): void {
     const last = this.lines.at(-1);
     if (last?.role === "assistant" && last.open) last.text += delta;
     else this.lines.push({ role: "assistant", text: delta, open: true });
     this.renderTranscript();
   }
 
-  replyEnd(): void {
-    this.closeReply();
-    this.renderTranscript();
+  private typeNext(): void {
+    const next = this.queue.shift();
+    if (!next) {
+      this.typing = null;
+      this.writeTimer = 0;
+      this.renderTranscript(); // the caret blinks again until the next sentence
+      return;
+    }
+    // When each character is due, as a share of the sentence: pauses after punctuation.
+    const chars = [...next.text];
+    const weights = chars.map((_, i) => 1 + (PAUSE_AFTER[chars[i - 1]] ?? 0));
+    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    let sum = 0;
+    const at = weights.map((w) => ((sum += w) / total) * next.ms);
+    this.typing = { ...next, at, shown: 0, start: performance.now() };
+    this.typeTick();
+  }
+
+  private typeTick(): void {
+    const job = this.typing;
+    if (!job) return;
+    const elapsed = performance.now() - job.start;
+    let n = job.shown;
+    while (n < job.at.length && job.at[n] <= elapsed) n++;
+    if (n > job.shown) {
+      this.append([...job.text].slice(job.shown, n).join(""));
+      job.shown = n;
+    }
+    if (job.shown >= job.at.length) {
+      this.typeNext();
+      return;
+    }
+    this.writeTimer = window.setTimeout(() => this.typeTick(), TYPE_TICK_MS);
+  }
+
+  private flushWords(): void {
+    const job = this.typing;
+    const rest =
+      (job ? [...job.text].slice(job.shown).join("") : "") +
+      this.queue.map((q) => q.text).join("");
+    this.stopWriting();
+    if (rest) this.append(rest);
+  }
+
+  private stopWriting(): void {
+    clearTimeout(this.writeTimer);
+    this.writeTimer = 0;
+    this.queue = [];
+    this.typing = null;
   }
 
   private closeReply(): void {
     const last = this.lines.at(-1);
     if (last?.open) last.open = false;
+  }
+
+  private copyButton(line: TranscriptLine): HTMLElement {
+    const button = el("button", "copy", `⧉ ${this.t.copy}`) as HTMLButtonElement;
+    button.type = "button";
+    button.title = this.t.copy;
+    button.addEventListener("click", async () => {
+      const ok = await copyText(line.text.trim());
+      button.textContent = ok ? `✓ ${this.t.copied}` : `✖ ${this.t.copyFailed}`;
+      button.classList.toggle("done", ok);
+      window.setTimeout(() => {
+        button.textContent = `⧉ ${this.t.copy}`;
+        button.classList.remove("done");
+      }, 1500);
+    });
+    return button;
   }
 
   private renderTranscript(): void {
@@ -257,7 +406,8 @@ export class Panels {
         row.style.opacity = String(0.35 + (0.65 * (i + 1)) / this.lines.length);
         if (line.role === "user") row.append(el("span", "who", `${this.t.you} ›`));
         row.append(el("span", "text", line.text.trim()));
-        if (line.open) row.append(el("span", "cursor"));
+        if (line.open) row.append(el("span", this.typing ? "cursor typing" : "cursor"));
+        else if (line.role === "assistant" && line.text.trim()) row.append(this.copyButton(line));
         return row;
       }),
     );

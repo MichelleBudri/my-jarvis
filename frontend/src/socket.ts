@@ -30,7 +30,16 @@ export class Link {
     };
   }
 
-  send(type: "wake" | "sleep"): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type }));
+  send(type: "wake" | "sleep" | "export"): void {
+    this.post({ type });
+  }
+
+  /** Flip a switch; the backend answers with the new state. */
+  set(type: "autostart", value: boolean): void {
+    this.post({ type, value });
+  }
+
+  private post(msg: object): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 }
