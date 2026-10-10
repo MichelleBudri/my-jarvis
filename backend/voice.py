@@ -499,6 +499,7 @@ class VoiceLoop:
 
 
 OLLAMA_WAIT_AT_LOGIN_S = 120
+WINDOW_QUIT = "hud window quit"  # cancel message: Cmd+Q in the HUD window ends Jarvis
 MIC_DENIED = (
     "The microphone delivers only silence: macOS has probably denied access to the app "
     "running Jarvis. Allow it in System Settings → Privacy & Security → Microphone."
@@ -518,6 +519,10 @@ async def run_voice(s: Settings, at_login: bool = False, **kwargs) -> int:
         return 0 if at_login else 1
     try:
         return await _run_voice(s, at_login=at_login, **kwargs)
+    except asyncio.CancelledError as exc:
+        if WINDOW_QUIT not in exc.args:
+            raise
+        return 0  # quit from the HUD window while loading: exit 0, so launchd lets it be
     finally:
         lock.release()
 
@@ -559,6 +564,9 @@ async def _run_voice(
         from backend.hud.window import HudWindow
 
         window = HudWindow(server.url, s.assistant_name, *launcher(s))
+        # Cmd+Q in the window quits Jarvis: the main loop below ends as with Ctrl+C.
+        main_task = asyncio.current_task()
+        window.on_quit = lambda: main_task.cancel(WINDOW_QUIT)
     if server and s.hud.open_on_start:
         background = [asyncio.create_task(open_hud(bus, server.url, window))]
     else:

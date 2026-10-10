@@ -285,3 +285,41 @@ def test_news_panel_carries_only_web_links():
     assert items[0]["link"] == "https://example.com/a" and "link" not in items[1]
     assert is_web_link("https://news.google.com/rss/articles/x")
     assert not is_web_link("javascript:alert(1)") and not is_web_link("file:///etc/passwd")
+
+
+def _window_that_exits(tmp_path, code: int):
+    """A stand-in for the window process: stays open past the 1.5 s start check, then exits."""
+    from backend.hud import window
+
+    program = tmp_path / "fake-window"
+    program.write_text(f"#!/bin/sh\nsleep 1.7\nexit {code}\n")
+    program.chmod(0o755)
+    return window.HudWindow("http://hud", "Jarvis", str(program))
+
+
+@pytest.mark.parametrize(("code", "quits"), [(0, True), (1, False)])
+def test_quitting_the_hud_window_quits_jarvis(tmp_path, code, quits):
+    win = _window_that_exits(tmp_path, code)
+    quit_calls = []
+    win.on_quit = lambda: quit_calls.append(True)
+
+    async def scenario():
+        assert await win.open() is True
+        await asyncio.sleep(0.6)
+
+    asyncio.run(scenario())
+    assert quit_calls == ([True] if quits else [])  # Cmd+Q exits 0; a crash does not
+
+
+def test_closing_the_hud_window_from_jarvis_does_not_quit(tmp_path):
+    win = _window_that_exits(tmp_path, 0)
+    quit_calls = []
+    win.on_quit = lambda: quit_calls.append(True)
+
+    async def scenario():
+        assert await win.open() is True
+        await win.close()  # Jarvis itself is quitting
+        await asyncio.sleep(0.3)
+
+    asyncio.run(scenario())
+    assert quit_calls == []

@@ -255,6 +255,7 @@ async def run_demo(s: Settings, sample: bool = False) -> int:
         from backend.hud.window import HudWindow
 
         window = HudWindow(server.url, s.assistant_name, *launcher(s))
+        window.on_quit = asyncio.current_task().cancel  # Cmd+Q ends the demo too
     if s.hud.open_on_start:
         tasks.append(asyncio.create_task(open_hud(bus, server.url, window)))
     try:

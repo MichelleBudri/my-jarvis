@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +115,11 @@ class HudWindow:
         self.env = env
         self._proc: asyncio.subprocess.Process | None = None
         self._drain: asyncio.Task | None = None
+        self._watch: asyncio.Task | None = None
+        self._closing = False
+        # Called when the person quits the window (Cmd+Q, or closing it): Jarvis then quits
+        # too, instead of staying in the background with no window to show it is on.
+        self.on_quit: Callable[[], None] | None = None
 
     async def open(self) -> bool:
         if self._proc is not None and self._proc.returncode is None:
@@ -137,13 +143,31 @@ class HudWindow:
             log.warning("HUD window closed on start: %s", err.splitlines()[-1] if err else "")
             return False
         self._drain = asyncio.create_task(self._log_stderr())  # a full pipe would block it
+        self._closing = False
+        self._watch = asyncio.create_task(self._wait_exit())
         return True
+
+    async def _wait_exit(self) -> None:
+        """Cmd+Q ends the window process with exit code 0 (Cocoa's `terminate:`), and so does
+        closing the window; a crash does not, and leaves Jarvis running."""
+        code = await self._proc.wait()
+        if self._closing:
+            return
+        if code != 0:
+            log.warning("HUD window exited with code %s", code)
+            return
+        log.info("HUD window quit: %s quits too", self.title)
+        if self.on_quit is not None:
+            self.on_quit()
 
     async def _log_stderr(self) -> None:
         while line := await self._proc.stderr.readline():
             log.debug("HUD window: %s", line.decode(errors="replace").rstrip())
 
     async def close(self) -> None:
+        self._closing = True
+        if self._watch:
+            self._watch.cancel()
         if self._drain:
             self._drain.cancel()
         if self._proc is None or self._proc.returncode is not None:
