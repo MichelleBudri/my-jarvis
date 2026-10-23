@@ -173,7 +173,9 @@ class FakeConversation:
         self.text, self.on_reply = text, on_reply
         self.notes: list[str] = []
         self.last_stats = type(
-            "Stats", (), {"first_token_s": None, "tokens_per_second": None, "tools": []}
+            "Stats",
+            (),
+            {"first_token_s": None, "tokens_per_second": None, "tools": [], "quiet": False},
         )()
 
     async def reply(self, user_text):
@@ -231,6 +233,23 @@ def test_go_to_sleep_after_the_farewell():
         await h.loop.task
         await asyncio.sleep(0)
         assert h.loop.speaker.said == ["Às suas ordens."]
+        assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
+
+    asyncio.run(scenario())
+
+
+def test_sleeps_after_a_quiet_tool_so_the_music_is_heard():
+    async def scenario():
+        h = Harness(text="Toque BTS.")
+        h.loop.speaker = FakeSpeaker()
+        h.loop.conv = FakeConversation("Um momento. ")
+        h.loop.conv.last_stats.quiet = True  # play_music worked: nothing said after it
+        h.wake_model.wake_soon()
+        await h.frames(3)
+        await h.frames(20, prob=0.9)
+        await h.frames(30)
+        await h.loop.task
+        await asyncio.sleep(0)
         assert h.state is State.SLEEPING and h.chimes[-1] is earcon.SLEEP
 
     asyncio.run(scenario())

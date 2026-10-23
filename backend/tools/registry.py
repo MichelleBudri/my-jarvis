@@ -32,6 +32,8 @@ class Tool:
     # What the system prompt says the assistant can do, per language ("pt", "en").
     capability: dict[str, str] = field(default_factory=dict)
     slow: bool = False  # goes to the network: say "one moment" while it runs
+    # Success is the whole answer: no reply after it (music would play under the voice).
+    quiet: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -66,6 +68,10 @@ class ToolRegistry:
     def is_slow(self, name: str) -> bool:
         tool = self._tools.get(name)
         return bool(tool and tool.slow)
+
+    def is_quiet(self, name: str) -> bool:
+        tool = self._tools.get(name)
+        return bool(tool and tool.quiet)
 
     @property
     def names(self) -> list[str]:

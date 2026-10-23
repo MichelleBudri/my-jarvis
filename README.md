@@ -7,7 +7,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-00e5ff?style=for-the-badge&logo=apple&logoColor=00e5ff&labelColor=0a1420)
 ![Python](https://img.shields.io/badge/Python-3.12+-00e5ff?style=for-the-badge&logo=python&logoColor=00e5ff&labelColor=0a1420)
 ![Ollama](https://img.shields.io/badge/LLM-Ollama-00e5ff?style=for-the-badge&logo=ollama&logoColor=00e5ff&labelColor=0a1420)
-![Status](https://img.shields.io/badge/Phase-8_of_8-3dffb0?style=for-the-badge&labelColor=0a1420)
+![Status](https://img.shields.io/badge/Phase-9_in_progress-3dffb0?style=for-the-badge&labelColor=0a1420)
 ![License](https://img.shields.io/badge/License-MIT-3dffb0?style=for-the-badge&labelColor=0a1420)
 
 **A voice assistant that lives on your Mac, not in someone else's data center.**<br>
@@ -67,7 +67,7 @@ The language model, speech recognition and voice all run locally: no API keys, n
   <tr>
     <td colspan="3" valign="top">
       <h3>🎵 Plays your music</h3>
-      "Play Stray Kids on Spotify" opens Spotify and starts the song in about 3 seconds, with no account or API key. Pause, skip, ask what's playing or turn the music down by voice. While Jarvis listens and speaks, the music drops so it hears you and you hear it.
+      "Play Stray Kids on Spotify" opens Spotify and starts the song in about 3 seconds, with no account or API key. Pause, skip, ask what's playing or turn the music up and down by voice. While Jarvis listens and speaks, the music drops so it hears you and you hear it; once a song starts, it goes quiet so you hear the music right away.
     </td>
   </tr>
 </table>
@@ -222,9 +222,9 @@ When a tool takes a moment (a slow news feed, for example), Jarvis says "One mom
 <summary><b>Music (Spotify)</b></summary>
 <br>
 
-"Play Stray Kids" opens Spotify if it is closed and starts the top search result, usually in about 3 seconds. Spotify's AppleScript can play, pause, skip and set its volume, but it cannot search, so Jarvis opens the app's own search page, finds the round green play button of the top result on a screenshot of the window and clicks it, then puts the pointer back where it was. AppleScript confirms that something started playing. The top result is Spotify's choice, so name the artist when it matters ("Bohemian Rhapsody by Queen").
+"Play Stray Kids" opens Spotify if it is closed and starts the top search result, usually in about 3 seconds. Spotify's AppleScript can play, pause, skip and set its volume, but it cannot search, so Jarvis opens the app's own search page, finds the round green play button of the top result on a screenshot of the window and clicks it, then puts the pointer back where it was. AppleScript confirms that something started playing. A song asked for starts at 75% of Spotify's volume (`media.play_volume`; `null` keeps the current one), and Jarvis goes back to sleep without describing it, so the music comes up at once. If it fails, Jarvis says why. The top result is Spotify's choice, so name the artist when it matters ("Bohemian Rhapsody by Queen").
 
-While Jarvis listens and speaks, the music drops to 20% of its volume (`media.duck_to`) and comes back when it goes to sleep, so Whisper hears you and you hear the reply. "Turn the music down" changes Spotify's volume; "turn the volume down" changes the Mac's.
+While Jarvis listens and speaks, the music drops to 20% of its volume (`media.duck_to`) and comes back when it goes to sleep, so Whisper hears you and you hear the reply. "Turn the music up" or "down" moves Spotify's volume by 20; "turn the volume down" changes the Mac's.
 
 The first song asks for three permissions for the app running Jarvis (Jarvis, or your terminal): **Automation** (control Spotify and System Events), **Accessibility** (the click) and **Screen Recording** (the screenshot), all under **System Settings → Privacy & Security**. If you installed launch at login before this feature, run `autostart install` again so the app can ask for Automation. While a song is being found, Spotify comes to the front for a moment; don't move the mouse over it until it starts.
 
@@ -327,7 +327,7 @@ Unloaded, Jarvis holds about 0.5 GB and the model nothing. The cost comes on wak
 | 5 | Activation briefing | ✅ Done |
 | 6 | Holographic HUD | ✅ Done |
 | 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | ✅ Done |
-| 8 | Loading screen with the briefing ready at 100%, memory profiles, launch-at-login switch, typed transcript, copy and export, clickable news, more natural speech | ✅ Done |
+| 8 | Loading screen with the briefing ready at 100%, memory profiles, launch-at-login switch, typed transcript, copy and export, clickable news, more natural speech, <kbd>⌘</kbd><kbd>Q</kbd> quits from the window | ✅ Done |
 | 9 | App control: Spotify by voice (play anything, pause, skip, volume, music lowered while Jarvis talks); more apps next | 🚧 In progress |
 
 

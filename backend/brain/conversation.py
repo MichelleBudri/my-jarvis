@@ -52,6 +52,7 @@ class TurnStats:
     prompt_eval_s: float | None = None
     tools: list[str] = field(default_factory=list)  # tools called this turn, in order
     tools_s: float = 0.0  # time spent running them
+    quiet: bool = False  # ended by a quiet tool that worked: nothing said after it
 
 
 class Conversation:
@@ -241,6 +242,18 @@ class Conversation:
         t = text.strip().rstrip(".!").lower()
         return t if t in self.tools else None
 
+    def _all_quiet(self, results: list[dict[str, Any]]) -> bool:
+        """Every call of the round was a quiet tool, and none of them failed."""
+        for m in results:
+            if not self.tools.is_quiet(m["tool_name"]):
+                return False
+            try:
+                if "error" in json.loads(m["content"]):
+                    return False
+            except (json.JSONDecodeError, TypeError):
+                return False
+        return bool(results)
+
     async def reply(self, user_text: str) -> AsyncIterator[str]:
         """Stream the reply, running any tools the model asks for, and persist the turn."""
         user_text_var.set(user_text)  # this task's context: tools see what was asked
@@ -347,6 +360,9 @@ class Conversation:
                 messages.extend(round_)
                 trace.extend(round_)  # only once the results are in: no orphan call
                 said = []  # kept in the call message
+                if self._all_quiet(round_[1:]):
+                    stats.quiet = True
+                    break
             else:
                 log.warning("Model kept calling tools after %d rounds", self.s.tools.max_rounds)
         finally:

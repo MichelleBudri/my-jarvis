@@ -172,9 +172,25 @@ def test_play_music_lowers_the_music_before_it_starts():
         media.ducker.awake = True  # asked by voice: Jarvis is about to reply
         out = await media.play_music("  stray   kids ")
         assert spotify.searched == ["stray kids"]
-        assert out["track"] == "MANIAC" and spotify.vol == 18
+        # media.play_volume: 75, lowered while Jarvis replies, 75 once it sleeps.
+        assert out["track"] == "MANIAC" and spotify.vol == 15
+        assert out["spotify_volume"] == 75
         assert await media.play_music("") == {"ok": True, "action": "resume"}
         assert spotify.commands[-1] == ("play",)
+        media.ducker.on_state(State.SPEAKING, State.SLEEPING)
+        await asyncio.gather(*media.ducker._tasks)
+        assert spotify.vol == 75
+
+    asyncio.run(scenario())
+
+
+def test_play_music_keeps_the_volume_without_play_volume():
+    async def scenario():
+        spotify = FakeSpotify(volume=40)
+        s = Settings()
+        s.media.play_volume = None
+        await MediaService(s, spotify).play_music("maniac")
+        assert spotify.vol == 40
 
     asyncio.run(scenario())
 
@@ -194,6 +210,24 @@ def test_media_control_and_volume():
         assert await media.now_playing() == {"state": "Spotify is closed"}
         with pytest.raises(ToolError, match="closed"):
             await media.media_control("pause")
+
+    asyncio.run(scenario())
+
+
+def test_volume_direction_wins_over_a_wrong_level():
+    async def scenario():
+        spotify = FakeSpotify(volume=80)
+        media = MediaService(Settings(), spotify)
+        media.ducker.awake = True
+        await media.ducker.duck()
+        # "aumenta um pouco a música" came as level=20: it was 4% while ducked, then 20.
+        assert (await media.media_volume("up", level=20))["spotify_volume"] == 100
+        assert (await media.media_volume("down"))["spotify_volume"] == 80
+        assert (await media.media_volume("down", change=10))["spotify_volume"] == 70
+        assert (await media.media_volume("up", level=90))["spotify_volume"] == 90
+        assert spotify.vol == 18  # still ducked until Jarvis sleeps
+        with pytest.raises(ToolError, match="direction"):
+            await media.media_volume("louder")
 
     asyncio.run(scenario())
 

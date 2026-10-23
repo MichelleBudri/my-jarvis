@@ -159,6 +159,7 @@ class MediaConfig(BaseModel):
     # Spotify's volume while Jarvis listens and speaks, as a fraction of its own; 0 = off.
     duck_to: float = 0.2
     search_wait_s: float = 6  # how long to wait for the search results to show
+    play_volume: int | None = 75  # Spotify's volume for a song asked for; None = keep
 
 
 class NewsConfig(BaseModel):

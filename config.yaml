@@ -67,6 +67,7 @@ tools:
 media:                      # Spotify (needs Automation, Accessibility, Screen Recording)
   duck_to: 0.2              # music volume while Jarvis listens and speaks; 0 = off
   search_wait_s: 6          # how long to wait for the search results
+  play_volume: 75           # Spotify's volume when a song is asked for; null = keep
 
 news:
   cache_minutes: 30

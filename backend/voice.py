@@ -477,6 +477,8 @@ class VoiceLoop:
         finally:
             end_reply(self.bus, self.speaker)
         st = self.conv.last_stats
+        if st.quiet:
+            self.request_sleep()  # e.g. the music asked for is playing: let it be heard
         details = [f"stt {stt_s:.2f}s"]
         if st.first_token_s is not None:
             details.append(f"llm first word {st.first_token_s:.2f}s")

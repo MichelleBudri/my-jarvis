@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 APP = "Spotify"
 LAUNCH_WAIT_S = 10
 POLL_S = 0.3
+VOLUME_STEP = 20  # "aumenta a música" with no number
 # Spotify's green (#1ED760) and the size of the top result's play button, in points (48).
 BUTTON_PT = (30, 72)
 
@@ -364,8 +365,11 @@ class MediaService:
             return await self.media_control("resume")
         await self.spotify.launch()
         await self.ducker.duck(even_paused=True)  # so it never starts over Jarvis's reply
+        out: dict = {"ok": True}
+        if self.s.media.play_volume is not None:
+            out["spotify_volume"] = await self.ducker.set_level(self.s.media.play_volume)
         track = await self.spotify.search_and_play(query, self.s.media.search_wait_s)
-        return {"ok": True, **track.describe()}
+        return {**out, **track.describe()}
 
     async def media_control(self, action: str) -> dict:
         lines = ACTIONS.get(action)
@@ -392,13 +396,24 @@ class MediaService:
             }
         return out
 
-    async def media_volume(self, level: int | None = None, change: int | None = None) -> dict:
-        if level is None and change is None:
-            raise ToolError("give a level (0-100) or a change such as -20 or +20")
+    async def media_volume(
+        self, direction: str = "", level: int | None = None, change: int | None = None
+    ) -> dict:
+        if direction not in ("", "up", "down"):
+            raise ToolError("direction must be up or down")
+        if not direction and level is None and change is None:
+            raise ToolError("give a direction (up or down), a level (0-100) or a change")
         if not await self.spotify.running():
             raise ToolError(f"{APP} is closed")
-        if level is None:
-            level = await self.ducker.level() + int(change or 0)
+        current = await self.ducker.level()
+        if direction:
+            # qwen3 answers "aumenta um pouco" with level=20 or a level guessed from the
+            # history: a level that goes the wrong way becomes a step the right way.
+            sign = 1 if direction == "up" else -1
+            if level is None or (int(level) - current) * sign <= 0:
+                level = current + sign * (abs(int(change)) if change else VOLUME_STEP)
+        elif level is None:
+            level = current + int(change or 0)
         return {"ok": True, "spotify_volume": await self.ducker.set_level(level)}
 
 
@@ -427,6 +442,7 @@ def media_tools(s: Settings, service: MediaService | None = None) -> list[Tool]:
             required=["query"],
             capability=cap,
             slow=True,
+            quiet=True,  # the music is the answer: Jarvis sleeps and it comes back up
         ),
         Tool(
             name="media_control",
@@ -453,12 +469,14 @@ def media_tools(s: Settings, service: MediaService | None = None) -> list[Tool]:
             description=(
                 "Spotify's own volume, for 'abaixa a música' or 'aumenta a música'. Not the "
                 "Mac's volume: for that, or for 'abaixa o volume' with no music mentioned, use "
-                "set_volume. Give a level from 0 to 100, or a change such as -20 or +20."
+                "set_volume. For 'aumenta' or 'abaixa', give direction up or down; give level "
+                "only when the person says a number, such as 'música em 60'."
             ),
             handler=media.media_volume,
             parameters={
-                "level": {"type": "integer", "description": "Volume from 0 to 100"},
-                "change": {"type": "integer", "description": "Relative change, e.g. -20"},
+                "direction": {"type": "string", "enum": ["up", "down"]},
+                "level": {"type": "integer", "description": "Volume from 0 to 100, if said"},
+                "change": {"type": "integer", "description": "Relative change, if said"},
             },
             capability=cap,
         ),

@@ -556,6 +556,37 @@ def test_slow_tool_says_one_moment_without_persisting_it(tmp_path):
     assert store.recent(conv.id, 10)[-1]["content"] == "Pronto."
 
 
+def test_quiet_tool_ends_the_turn_unless_it_fails(tmp_path):
+    # "Toque BTS": once the music plays, a spoken reply would only cover it.
+    turn = [0]
+
+    def handler(request):
+        turn[0] += 1
+        if turn[0] % 2:
+            call = {"function": {"name": "play", "arguments": {}}}
+            line = {"message": {"content": "", "tool_calls": [call]}, "done": True}
+        else:
+            line = {"message": {"content": "O Spotify não respondeu."}, "done": True}
+        return httpx.Response(200, text=json.dumps(line))
+
+    s = Settings()
+    reg = ToolRegistry([Tool("play", "Play", _echo, slow=True, quiet=True)])
+    client = httpx.AsyncClient(base_url="http://o", transport=httpx.MockTransport(handler))
+    store = MemoryStore(tmp_path / "t.db")
+    conv = Conversation(s, OllamaClient(s.llm, client=client), store, tools=reg)
+    conv.add_assistant_note("Boa noite.")
+
+    async def go(text):
+        return [t async for t in conv.reply(text)]
+
+    assert asyncio.run(go("Toque BTS.")) == ["Um momento. "]
+    assert conv.last_stats.quiet and turn[0] == 1
+    assert store.recent(conv.id, 10)[-1]["role"] == "tool"  # the call stays in history
+    reg._tools["play"].handler = _broken
+    assert asyncio.run(go("Toque BTS."))[-1] == "O Spotify não respondeu."
+    assert not conv.last_stats.quiet
+
+
 def test_blank_reply_is_retried_once(tmp_path):
     # Ollama sometimes swallows a malformed tool call: tokens generated, nothing returned.
     turn = [0]
