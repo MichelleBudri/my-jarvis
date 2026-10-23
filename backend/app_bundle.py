@@ -89,6 +89,10 @@ def info_plist(s: Settings) -> dict:
             f'{s.assistant_name} listens for "Hey {s.assistant_name}" and for your requests, '
             "and transcribes them on this Mac."
         ),
+        # Without it, macOS denies AppleScript to a bundled app without asking (Spotify).
+        "NSAppleEventsUsageDescription": (
+            f"{s.assistant_name} controls Spotify when you ask it to play or pause music."
+        ),
     }
 
 

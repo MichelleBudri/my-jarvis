@@ -189,7 +189,8 @@ def system_tools(s: Settings) -> list[Tool]:
                 "Set the Mac's output volume and/or mute or unmute it. To silence the sound, "
                 "pass mute=true (not level 0). To bring the sound back, pass only "
                 "mute=false, with no level: the previous volume comes back by itself. Pass a "
-                "level only when the user says a number or asks for louder/quieter."
+                "level only when the user says a number or asks for louder/quieter. For the "
+                "music alone ('abaixa a música'), use media_volume."
             ),
             handler=set_volume,
             parameters={

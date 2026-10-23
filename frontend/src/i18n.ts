@@ -79,6 +79,10 @@ const pt = {
     list_timers: "verificando os timers",
     cancel_timer: "cancelando o timer",
     go_to_sleep: "entrando em espera",
+    play_music: "tocando no Spotify",
+    media_control: "controlando a música",
+    now_playing: "vendo o que está tocando",
+    media_volume: "ajustando o volume da música",
   } as Record<string, string>,
 };
 
@@ -163,6 +167,10 @@ const en: Strings = {
     list_timers: "checking the timers",
     cancel_timer: "cancelling the timer",
     go_to_sleep: "standing by",
+    play_music: "playing on Spotify",
+    media_control: "controlling the music",
+    now_playing: "checking what's playing",
+    media_volume: "setting the music volume",
   },
 };
 

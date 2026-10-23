@@ -60,9 +60,13 @@ wakeword:
   chime: true               # short tones when waking up and going back to sleep
 
 tools:
-  enabled: [weather, news, system, timers, clock, memory]   # remove one to hide it from the model
+  enabled: [weather, news, system, timers, clock, memory, media]   # remove one to hide it
   max_rounds: 3             # tool calls the model may chain before it must answer
   one_moment_after_s: 1.5   # say "one moment" when the model is silent this long
+
+media:                      # Spotify (needs Automation, Accessibility, Screen Recording)
+  duck_to: 0.2              # music volume while Jarvis listens and speaks; 0 = off
+  search_wait_s: 6          # how long to wait for the search results
 
 news:
   cache_minutes: 30

@@ -29,7 +29,7 @@ The language model, speech recognition and voice all run locally: no API keys, n
     </td>
     <td width="33%" valign="top">
       <h3>🔒 100% local</h3>
-      Runs on Apple Silicon through Ollama and MLX. Your conversations never leave your machine. Only weather and news touch the internet, through free, keyless APIs.
+      Runs on Apple Silicon through Ollama and MLX. Your conversations never leave your machine. Only weather and news touch the internet, through free, keyless APIs (and Spotify, when you ask it for music).
     </td>
     <td width="33%" valign="top">
       <h3>🎩 A butler's manners</h3>
@@ -64,6 +64,12 @@ The language model, speech recognition and voice all run locally: no API keys, n
       Starts with your Mac (a switch in the HUD turns it on or off) and waits quietly for "Hey Jarvis". Asleep, it gives the model's memory back: about 0.5 GB instead of 7 GB.
     </td>
   </tr>
+  <tr>
+    <td colspan="3" valign="top">
+      <h3>🎵 Plays your music</h3>
+      "Play Stray Kids on Spotify" opens Spotify and starts the song in about 3 seconds, with no account or API key. Pause, skip, ask what's playing or turn the music down by voice. While Jarvis listens and speaks, the music drops so it hears you and you hear it.
+    </td>
+  </tr>
 </table>
 
 ## ◈ HUD
@@ -83,7 +89,7 @@ When `voice` starts, the HUD opens in its own window. It is served by Jarvis its
 - **The panels** show the weather, the latest AI headlines (click one to read it in your browser), battery, CPU and memory, how much memory Jarvis and its model hold ("resting" while the model is unloaded), timers counting down, and how long each reply took (speech recognition, first word from the model, first sound).
 - **Launch at login**, in the bottom bar, turns starting with your Mac on or off. It takes effect at the next login and leaves the running Jarvis alone.
 - **Tap the core** (or press <kbd>Space</kbd>) to wake Jarvis without the wake word, or to send it back to sleep mid-sentence. <kbd>F</kbd> toggles full screen.
-- **Closed the window?** Jarvis keeps running; `uv run python -m backend hud-window` opens it again.
+- **Quit the window** with <kbd>⌘</kbd><kbd>Q</kbd> (or close it) and Jarvis quits too, so it never stays on in the background with nothing on screen to show it. If the window crashes instead, Jarvis keeps running and `uv run python -m backend hud-window` opens it again.
 
 <div align="center">
 <img src="docs/assets/boot.png" width="70%" alt="The loading screen: 39%, with language engine, location, internet, weather, news, voice, speech recognition and wake word ready, the language model loading, and the briefing and its audio still to come">
@@ -99,7 +105,7 @@ flowchart LR
     WAKE --> VAD["Speech detection<br/><sub>Silero VAD</sub>"]
     VAD --> STT["Transcription<br/><sub>mlx-whisper</sub>"]
     STT --> LLM{{"🧠 Brain<br/><sub>Ollama · qwen3</sub>"}}
-    LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers</sub>"]
+    LLM <--> TOOLS["Tools<br/><sub>weather · news · system · timers · music</sub>"]
     LLM <--> MEM[("Memory<br/><sub>SQLite</sub>")]
     LLM --> TTS["Voice<br/><sub>Piper</sub>"]
     TTS --> SPK(["🔊 Speaker"])
@@ -206,8 +212,21 @@ Jarvis calls tools on its own when a question needs live data or an action:
 | Timers | "Remind me in 10 minutes to take the cake out" · "Make it 15" · "Cancel the timer" | Local; announced out loud when they end |
 | Clock | "How long until 6 pm?" · "How many days until Christmas?" | Local; the code does the arithmetic, not the model |
 | Memory | "Remember that I take my coffee black" · "Actually, make it with milk" · "Forget that" | Local (`data/jarvis.db`) |
+| Music | "Play Stray Kids on Spotify" · "Put on Maniac" · "Next" · "Pause" · "What's playing?" · "Turn the music down" | The Spotify app (no account or key) |
 
 When a tool takes a moment (a slow news feed, for example), Jarvis says "One moment" so you are not left in silence. In voice mode, saying goodbye, "that's all" or "you can rest" gets a short farewell and sends Jarvis back to sleep, and a plain "thank you" gets "You're welcome". Both are answered at once by code, not by the model, so they never echo you or come out wrong. Unmuting brings back the volume you had before. Turn tools off with `tools.enabled` in `config.yaml` (for example `JARVIS_TOOLS__ENABLED='["weather", "timers"]'`). Timers live in memory and are cleared when Jarvis quits.
+
+</details>
+
+<details>
+<summary><b>Music (Spotify)</b></summary>
+<br>
+
+"Play Stray Kids" opens Spotify if it is closed and starts the top search result, usually in about 3 seconds. Spotify's AppleScript can play, pause, skip and set its volume, but it cannot search, so Jarvis opens the app's own search page, finds the round green play button of the top result on a screenshot of the window and clicks it, then puts the pointer back where it was. AppleScript confirms that something started playing. The top result is Spotify's choice, so name the artist when it matters ("Bohemian Rhapsody by Queen").
+
+While Jarvis listens and speaks, the music drops to 20% of its volume (`media.duck_to`) and comes back when it goes to sleep, so Whisper hears you and you hear the reply. "Turn the music down" changes Spotify's volume; "turn the volume down" changes the Mac's.
+
+The first song asks for three permissions for the app running Jarvis (Jarvis, or your terminal): **Automation** (control Spotify and System Events), **Accessibility** (the click) and **Screen Recording** (the screenshot), all under **System Settings → Privacy & Security**. If you installed launch at login before this feature, run `autostart install` again so the app can ask for Automation. While a song is being found, Spotify comes to the front for a moment; don't move the mouse over it until it starts.
 
 </details>
 
@@ -309,6 +328,7 @@ Unloaded, Jarvis holds about 0.5 GB and the model nothing. The cost comes on wak
 | 6 | Holographic HUD | ✅ Done |
 | 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | ✅ Done |
 | 8 | Loading screen with the briefing ready at 100%, memory profiles, launch-at-login switch, typed transcript, copy and export, clickable news, more natural speech | ✅ Done |
+| 9 | App control: Spotify by voice (play anything, pause, skip, volume, music lowered while Jarvis talks); more apps next | 🚧 In progress |
 
 
 ## ◈ Stack

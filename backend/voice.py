@@ -27,6 +27,7 @@ from backend.resources import Resources
 from backend.state import State, StateMachine
 from backend.tools import Tool, build_registry
 from backend.tools.geocode import resolve_location
+from backend.tools.media import MediaService
 from backend.tools.timers import TimerManager
 
 console = Console(highlight=False)
@@ -607,7 +608,8 @@ async def _run_voice(
     # Shared with the briefing, so "more news?" right after it hits the cache.
     weather = WeatherService(s) if "weather" in s.tools.enabled else None
     news = NewsService(s) if "news" in s.tools.enabled else None
-    tools = build_registry(s, timers, extra, weather, news, store)
+    media = MediaService(s, wake=use_wake) if "media" in s.tools.enabled else None
+    tools = build_registry(s, timers, extra, weather, news, store, media)
     conv_id = store.last_conversation() if resume else None
     conv = Conversation(s, llm, store, conv_id, tools, warm_after_turn=True)
     conv.on_tool = lambda name: bus.publish({"type": "tool", "name": name})
@@ -745,6 +747,8 @@ async def _run_voice(
 
     resources = Resources(s, conv, stt, on_change=on_resources)
     loop.state.add_listener(resources.on_state)
+    if media:
+        loop.state.add_listener(media.on_state)
     if loop.state.state is State.SLEEPING:
         resources.on_state(None, State.SLEEPING)
     if speaking:

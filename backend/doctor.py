@@ -204,6 +204,19 @@ def check_autostart() -> Check:
     return Check("Launch at login", True, detail, required=False)
 
 
+def check_spotify(s: Settings) -> Check:
+    if "media" not in s.tools.enabled:
+        return Check("Spotify", True, "disabled", required=False)
+    found = any(
+        (base / "Spotify.app").exists()
+        for base in (Path("/Applications"), Path.home() / "Applications")
+    )
+    if not found:
+        return Check("Spotify", False, "not installed: music requests won't work", required=False)
+    detail = "installed · first song asks for Automation, Accessibility, Screen Recording"
+    return Check("Spotify", True, detail, required=False)
+
+
 def run() -> int:
     s = get_settings()
     checks = [
@@ -217,6 +230,7 @@ def run() -> int:
         *check_speech_models(s),
         *check_audio(s),
         check_hud(s),
+        check_spotify(s),
         check_autostart(),
     ]
 

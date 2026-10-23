@@ -138,13 +138,27 @@ class WakeWordConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    # weather | news | system | timers | clock | memory. Remove one to hide it from the model.
+    # weather | news | system | timers | clock | memory | media. Remove one to hide it.
     enabled: list[str] = Field(
-        default_factory=lambda: ["weather", "news", "system", "timers", "clock", "memory"]
+        default_factory=lambda: [
+            "weather",
+            "news",
+            "system",
+            "timers",
+            "clock",
+            "memory",
+            "media",
+        ]  # fmt: skip
     )
     max_rounds: int = 3  # tool calls the model may chain before it must answer
     # Say "one moment" when the model is silent this long (it is probably calling a tool).
     one_moment_after_s: float = 1.5
+
+
+class MediaConfig(BaseModel):
+    # Spotify's volume while Jarvis listens and speaks, as a fraction of its own; 0 = off.
+    duck_to: float = 0.2
+    search_wait_s: float = 6  # how long to wait for the search results to show
 
 
 class NewsConfig(BaseModel):
@@ -231,6 +245,7 @@ class Settings(BaseSettings):
     wakeword: WakeWordConfig = Field(default_factory=WakeWordConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
