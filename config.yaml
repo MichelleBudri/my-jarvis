@@ -83,6 +83,7 @@ briefing:
   headlines: 6              # candidates the model picks the one or two most relevant from
   fetch_timeout_s: 5        # a source slower than this is left out
   network_wait_s: 20        # how long the loading screen waits for the internet
+  once_a_day: true          # only the day's first start gets it; later ones open quietly
 
 resources:
   profile: balanced         # performance: always loaded · balanced: unload after idle_minutes asleep

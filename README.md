@@ -39,7 +39,7 @@ The language model, speech recognition and voice all run locally: no API keys, n
   <tr>
     <td valign="top">
       <h3>🌦️ Activation briefing</h3>
-      While a loading screen shows each step, Jarvis connects, fetches the local weather and the AI headlines that matter and writes the whole briefing. At 100% it speaks it in one go.
+      While a loading screen shows each step, Jarvis connects, fetches the local weather and the AI headlines that matter and writes the whole briefing. At 100% it speaks it in one go, once a day: later starts open quietly.
     </td>
     <td valign="top">
       <h3>🌍 Multilingual</h3>
@@ -82,7 +82,7 @@ The language model, speech recognition and voice all run locally: no API keys, n
 
 When `voice` starts, the HUD opens in its own window. It is served by Jarvis itself at <http://127.0.0.1:8765>, so it also works in any browser tab, on another monitor or in full screen.
 
-- **The loading screen** comes first: Jarvis connects, fetches the weather and news, loads its models and writes the whole briefing while a progress bar moves step by step (it moves only when a step really ends). At 100% it fades out and Jarvis speaks.
+- **The loading screen** comes first: Jarvis connects, fetches the weather and news, loads its models and writes the whole briefing while a progress bar moves step by step (it moves only when a step really ends). At 100% it fades out and Jarvis speaks. Later starts the same day skip the weather, news and briefing steps and open quietly.
 - **The core** changes with the state: dim and slow while it sleeps, cyan while it listens, amber and spinning fast while it thinks, bright while it speaks. The ring of bars follows the loudness of your voice, then of Jarvis's.
 - **The transcript** shows what you said and types Jarvis's reply letter by letter in step with its voice, pausing at commas and full stops, with the tool being used ("checking the weather"). Interrupt Jarvis and the typing stops where the voice did.
 - **Copy and export:** each reply has a **copy** button. **Export conversation** saves the whole current conversation (since Jarvis started, or the one resumed with `-r`) as Markdown in `~/Downloads` and shows it in Finder.
@@ -139,7 +139,7 @@ The setup downloads the language model (`qwen3:8b`, about 5.2 GB), the speech re
 
 | Command | What it does |
 |---|---|
-| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news and opens the HUD (`--no-briefing` and `--no-hud` skip them, `--no-wake` listens all the time, `-r` resumes the last conversation) |
+| `uv run python -m backend voice` | Voice conversation: say "Hey Jarvis", ask, and Jarvis answers out loud. Starts with the weather and AI news (on the day's first start) and opens the HUD (`--no-briefing` and `--no-hud` skip them, `--no-wake` listens all the time, `-r` resumes the last conversation) |
 | `uv run python -m backend chat` | Text chat with streaming replies (`-s` reads them aloud, `-r` resumes the last conversation) |
 | `uv run python -m backend autostart install` | Launch Jarvis at login, in the background (`status`, `stop`, `start`, `uninstall`; `--no-briefing` to start silently) |
 | `uv run python -m backend footprint` | Memory held by the running Jarvis (with the HUD window) and by its model in Ollama |
@@ -293,7 +293,7 @@ JARVIS_AUDIO__BARGE_IN=true uv run python -m backend voice
 
 No headphones needed: echo cancellation (WebRTC's AEC3, running locally) receives everything Jarvis plays and removes it from the microphone. Run `uv run python -m backend echo-test` to check your room: on a MacBook Air at normal volume, the speech detector went from hearing Jarvis in 88% of the frames to 0%. At high volume you may need to speak up, or keep talking for a second or two, before Jarvis notices you; with the `say` voice there is no echo cancellation, so use headphones.
 
-On start, Jarvis says the briefing: a greeting and today's weather, written by code from the forecast numbers in plain spoken sentences ("It's 22 degrees out and drizzling... An umbrella would be wise."), then the one or two most relevant AI headlines, picked and retold by the model like a newsreader, one sentence each. Everything loads behind the HUD's loading screen: the models, the weather and news, then the whole briefing is written and synthesized, so at 100% Jarvis speaks it without a pause (about 25 seconds after launch on a MacBook Air M4, most of it the model processing its prompt). The terminal shows when each part was ready. At login Jarvis waits up to `JARVIS_BRIEFING__NETWORK_WAIT_S` (default 20) for Wi-Fi; without internet, the briefing is only the greeting. A source that fails or takes over `JARVIS_BRIEFING__FETCH_TIMEOUT_S` (default 5) is left out. Turn it off with `JARVIS_BRIEFING__ENABLED=false` or `voice --no-briefing`.
+On the day's first start, Jarvis says the briefing: a greeting and today's weather, written by code from the forecast numbers in plain spoken sentences ("It's 22 degrees out and drizzling... An umbrella would be wise."), then the one or two most relevant AI headlines, picked and retold by the model like a newsreader, one sentence each. Everything loads behind the HUD's loading screen: the models, the weather and news, then the whole briefing is written and synthesized, so at 100% Jarvis speaks it without a pause (about 25 seconds after launch on a MacBook Air M4, most of it the model processing its prompt). The terminal shows when each part was ready. At login Jarvis waits up to `JARVIS_BRIEFING__NETWORK_WAIT_S` (default 20) for Wi-Fi; without internet, the briefing is only the greeting. A source that fails or takes over `JARVIS_BRIEFING__FETCH_TIMEOUT_S` (default 5) is left out. The briefing is spoken only on the day's first start; later starts that day open quietly, with the weather and news still on the HUD and "any AI news?" a question away. It counts as given once the headlines were spoken, so a start without internet tries again next time. `JARVIS_BRIEFING__ONCE_A_DAY=false` brings it back on every start; turn it off with `JARVIS_BRIEFING__ENABLED=false` or `voice --no-briefing`.
 
 Other knobs: `JARVIS_VAD__SILENCE_MS` (how long a pause ends your turn, default 700), `JARVIS_TTS__LENGTH_SCALE` (speaking speed, below 1 is faster), and `JARVIS_AUDIO__INPUT_DEVICE` / `_OUTPUT_DEVICE` (list devices with `uv run python -m sounddevice`).
 
@@ -328,7 +328,7 @@ Unloaded, Jarvis holds about 0.5 GB and the model nothing. The cost comes on wak
 | 6 | Holographic HUD | ✅ Done |
 | 7 | Polish: long-term memory, launch at login, echo cancellation, native HUD window | ✅ Done |
 | 8 | Loading screen with the briefing ready at 100%, memory profiles, launch-at-login switch, typed transcript, copy and export, clickable news, more natural speech, <kbd>⌘</kbd><kbd>Q</kbd> quits from the window | ✅ Done |
-| 9 | App control: Spotify by voice (play anything, pause, skip, volume, music lowered while Jarvis talks); more apps next | 🚧 In progress |
+| 9 | App control: Spotify by voice (play anything at 75%, pause, skip, volume up and down, music lowered while Jarvis talks, no reply over a song); briefing once a day; more apps next | 🚧 In progress |
 
 
 ## ◈ Stack

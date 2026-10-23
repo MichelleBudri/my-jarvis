@@ -11,7 +11,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -19,6 +19,7 @@ import httpx
 from backend.brain.conversation import Conversation
 from backend.brain.llm import LLMError
 from backend.brain.prompts import build_context_note, build_greeting
+from backend.config import Settings
 from backend.tools.news import NewsService
 from backend.tools.registry import ToolError
 from backend.tools.weather import WeatherService
@@ -26,6 +27,23 @@ from backend.tools.weather import WeatherService
 log = logging.getLogger(__name__)
 
 RAIN_WORTH_SAYING = 40  # per cent
+LAST_GIVEN = "last_briefing"  # in data/: the day the briefing was last spoken
+
+
+def due(s: Settings, today: date | None = None) -> bool:
+    """Whether this start gets the briefing: with `once_a_day`, only the day's first (D-50)."""
+    if not s.briefing.once_a_day:
+        return True
+    try:
+        last = (s.data_path / LAST_GIVEN).read_text().strip()
+    except OSError:
+        return True
+    return last != (today or date.today()).isoformat()
+
+
+def mark_given(s: Settings, today: date | None = None) -> None:
+    (s.data_path / LAST_GIVEN).write_text((today or date.today()).isoformat())
+
 
 # The headlines go in as the result of a get_ai_news call made by code: asked to retell
 # headlines pasted into the user message, qwen3:8b called get_ai_news 3 times in 3.

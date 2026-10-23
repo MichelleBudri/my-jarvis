@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 
@@ -249,3 +249,15 @@ def test_briefing_sentences_match_what_is_spoken_so_the_prepared_audio_is_used()
     rec = Recorder()
     asyncio.run(speak_tokens(rec, _once(text), 20, "pt"))
     assert rec.said == speech_sentences(text, 20, "pt") and len(rec.said) >= 2
+
+
+def test_briefing_once_a_day(tmp_path):
+    # Opened many times a day, the same news every time wore thin (D-50).
+    s = Settings(data_dir=tmp_path)
+    monday, tuesday = date(2026, 10, 19), date(2026, 10, 20)
+    assert briefing.due(s, monday)  # never given
+    briefing.mark_given(s, monday)
+    assert not briefing.due(s, monday)
+    assert briefing.due(s, tuesday)
+    s.briefing.once_a_day = False
+    assert briefing.due(s, monday)

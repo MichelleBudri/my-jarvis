@@ -173,6 +173,7 @@ class BriefingConfig(BaseModel):
     headlines: int = 6  # candidates the model picks the one or two most relevant from
     fetch_timeout_s: float = 5  # a source slower than this is left out
     network_wait_s: float = 20  # at login Wi-Fi may join late; then weather and news are skipped
+    once_a_day: bool = True  # later starts on the same day open quietly (D-50)
 
 
 class ResourcesConfig(BaseModel):

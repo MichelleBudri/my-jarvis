@@ -553,6 +553,9 @@ async def _run_voice(
     started_at = started_at or time.perf_counter()
     use_wake = s.wakeword.enabled if wake_word is None else wake_word
     use_briefing = s.briefing.enabled if briefing is None else briefing
+    if use_briefing and not brief.due(s):
+        console.print("[dim]Briefing already given today (briefing.once_a_day)[/]")
+        use_briefing = False
     use_hud = s.hud.enabled if hud is None else hud
 
     bus = HudBus()
@@ -721,6 +724,14 @@ async def _run_voice(
         speaking = asyncio.create_task(
             speak_briefing(s, speaker, _once(briefing_text), started_at, timings, bus)
         )
+        if data.news:  # offline, the next start tries again
+
+            def given(task: asyncio.Task) -> None:
+                # Heard, even if cut short by a question; not if the speech itself failed.
+                if task.cancelled() or task.exception() is None:
+                    brief.mark_given(s)
+
+            speaking.add_done_callback(given)
 
     chime = None
     if s.wakeword.chime:
